@@ -67,3 +67,15 @@
   2026-09-03), so nothing currently retains what generation produced. Until it
   does, every regeneration refuses with `BASELINE_REQUIRED` — correctly, but it
   means HOW-4.6 cannot complete end to end yet.
+
+## 2026-09-04 (deployment)
+
+- **Update** — Deployed to AgentCore: runtime `aeo_howto_generation-53Kml72pdB`, image `aeo-groundtruth/howto-generation` (arm64, digest-pinned), role `AmazonBedrockAgentCoreAEOHowtoGenerationRole`. `scripts/provision.py` is idempotent with `--check` and `--skip-push`.
+
+- **Learning** — 🔴 **`bedrock-mantle` is a different service namespace from `bedrock`.** `AnthropicBedrockMantle` calls `bedrock-mantle:CreateInference` on a **project** resource, not `bedrock:InvokeModel` on a foundation model, so a role holding only the `bedrock:*` grant is denied 403 at the first generation — after the deploy reported success and the container started cleanly. ⚠️ The sibling runtime's role already carried this under the name `InvokeViaMantleWhichIsADifferentService`, i.e. it had been paid for once. Reading its provisioning script was not enough; the answer was in its **live IAM policy**. When copying a runtime, diff the IAM too.
+
+- **Learning** — **The SDK refuses a non-streaming call whose `max_tokens` could exceed 10 minutes**, and 32000 trips it (the sibling's 16000 does not). Fixed by streaming from Bedrock internally — the runtime still answers the gateway with one JSON body. **Not** by shrinking the budget: the sibling documented 8000 killing a turn, and thinking shares this allowance, so cutting it trades a hard failure for a silent truncation that is indistinguishable from a short article by the time a reviewer sees it.
+
+- **Note** — **First real evidence for HOW-4.3.** Two shops, one template, measured against each other: a fleet-focused shop in Springfield produced 7 sections on duty cycles and servicing calendars; a retail garage in Chatham produced 6 on "can this wait" and pre-purchase inspections. **Lexical similarity 0.0 at `compared_count: 1`** — distinct, not unmeasured. The criterion remains a human judgement over ten shops, so this is evidence rather than proof, but it is the strongest available and it was not obtainable before the deploy.
+
+- **Note** — **Local runs still use the stub.** `aeo-backend/.env` keeps `HOWTO_GENERATION_RUNTIME_URL`, not the ARN, so local generation stays free. The ARN wins when set — switch deliberately, because every local generation then costs a real model call.
