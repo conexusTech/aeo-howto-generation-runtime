@@ -1,0 +1,29 @@
+# Pinned exactly, mirroring aeo-skill-builder-runtime. This image is deployed to
+# AgentCore Runtime and rebuilt rarely, so a floating dependency means the thing that
+# changed between a working and a broken ARM64 build is invisible in the diff.
+#
+# Versions are the ones the sibling runtimes were developed and tested against, read
+# off those environments rather than chosen fresh.
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
+pydantic==2.12.5
+pydantic-settings==2.13.1
+
+# The Bedrock Mantle client. Imported LAZILY inside BedrockChatModel, so the module
+# and the whole test suite import without it — but the runtime genuinely needs it.
+#
+# ⚠️ Do not grep for `import anthropic` to decide whether this is used: the import is
+# of the `from anthropic import X` form, which does not contain that string.
+#
+# 🔴 THE `[bedrock]` EXTRA IS LOAD-BEARING — it pulls boto3/botocore, which
+# AnthropicBedrockMantle needs for SigV4 signing. Without it the FIRST model-backed
+# call dies with `ModuleNotFoundError: No module named 'botocore'`, and in
+# aeo-skill-builder-runtime it did: botocore appears in no import statement, so a
+# grep of the package's imports could not have found it.
+anthropic[bedrock]==0.120.0
+
+# NOTHING ELSE. In particular there is no datasketch/numpy here: the MinHash in
+# app/howto_generation/similarity.py is ~40 lines of stdlib hashing. A dependency
+# whose job is one well-specified function is a dependency whose exact behaviour the
+# acceptance criterion now rides on, and HOW-4.4 pins the metric precisely enough
+# that "whatever the library does" is not an acceptable answer.

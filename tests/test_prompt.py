@@ -1,0 +1,206 @@
+"""HOW-4.3 — the prompt.
+
+The differentiation criterion is explicitly and permanently subjective: "ten
+shops produce articles a human reviewer judges to read as distinct pieces" is
+not automatable in V1, and the PRD flags that as a settled position rather than
+an oversight.
+
+So these tests do not assert that the output is differentiated. They assert the
+things about the prompt that ARE checkable, and which a reviewer's judgement
+depends on being true:
+
+- the instruction to vary structure, not just wording, is present
+- the shop's facts reach the model
+- the refusals reach the model, by name
+- prospect-scanning data does NOT reach the model
+"""
+
+from __future__ import annotations
+
+from app.howto_generation.contracts import Section, SlotResolution, Template
+from app.howto_generation.prompt import compose
+
+TEMPLATE = Template(
+    id="tpl-1",
+    service_key="timing-belt",
+    vertical="auto-repair",
+    title="How to replace a timing belt",
+    sections=[
+        Section(
+            type="intro",
+            position=1,
+            heading="Why this matters",
+            body_md="Every shop was handed this exact paragraph.",
+        )
+    ],
+    slots=[],
+)
+
+CONTEXT = {
+    "organization": {
+        "id": "org-1",
+        "name": "Auto Care Guy",
+        "industry": "auto repair",
+        "description": "Independent shop, mostly fleet work.",
+    },
+    "products_services": [
+        {"name": "Timing belt replacement", "description": "Belts and tensioners."}
+    ],
+    "personas": [{"name": "Fleet manager", "pain_points": "Vehicle downtime."}],
+    "voice_tone": {"tone": "plain, unshowy"},
+}
+
+
+class TestDifferentiationInstruction:
+    def test_the_prompt_asks_for_structural_variation_not_rewording(self) -> None:
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        lowered = stable.lower()
+        assert "order" in lowered
+        assert "emphasis" in lowered.replace("emphasise", "emphasis")
+        assert "examples" in lowered
+
+    def test_the_prompt_explains_the_consequence_of_duplication(self) -> None:
+        # Index filtering, not a penalty. A model told "do not duplicate" and a
+        # model told "duplicates get suppressed and the shop pays for a page
+        # nobody sees" are being asked different questions.
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert "indexed" in stable.lower()
+
+    def test_the_template_is_framed_as_subject_matter_not_a_spine(self) -> None:
+        _, volatile = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert "subject matter" in volatile.lower()
+        assert "verbatim" in volatile.lower()
+
+
+class TestFactsReachTheModel:
+    def test_the_shop_appears_in_the_stable_half(self) -> None:
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert "Auto Care Guy" in stable
+        assert "Fleet manager" in stable
+        assert "Timing belt replacement" in stable
+
+    def test_brand_voice_is_included_when_present(self) -> None:
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert "plain, unshowy" in stable
+
+    def test_brand_voice_is_absent_for_a_scraping_only_org(self) -> None:
+        # `voice_tone` is omitted entirely for orgs without the AEO module, and
+        # the absence is meaningful rather than missing data.
+        context = {k: v for k, v in CONTEXT.items() if k != "voice_tone"}
+        stable, _ = compose(
+            template=TEMPLATE, context=context, slots=SlotResolution()
+        ).split()
+        assert "BRAND VOICE" not in stable
+
+    def test_resolved_slots_are_listed_as_complete(self) -> None:
+        slots = SlotResolution(resolved={"city": "Springfield"})
+        _, volatile = compose(
+            template=TEMPLATE, context=CONTEXT, slots=slots
+        ).split()
+        assert "Springfield" in volatile
+        assert "complete" in volatile.lower()
+
+
+class TestRefusalsReachTheModel:
+    def test_a_refused_slot_is_named_as_forbidden(self) -> None:
+        # A model that merely sees no pricing slot will sometimes add pricing
+        # anyway, because an article about a repair reads as though it wants a
+        # price in it. Withholding is not the same as forbidding.
+        slots = SlotResolution(refused={"price_band": "no pricing source field"})
+        _, volatile = compose(
+            template=TEMPLATE, context=CONTEXT, slots=slots
+        ).split()
+        assert "FORBIDDEN" in volatile
+        assert "price_band" in volatile
+
+    def test_omitted_facts_are_named_as_unavailable(self) -> None:
+        slots = SlotResolution(omitted=["cta"])
+        _, volatile = compose(
+            template=TEMPLATE, context=CONTEXT, slots=slots
+        ).split()
+        assert "cta" in volatile
+        assert "never supply" in volatile.lower()
+
+    def test_the_prompt_forbids_hedged_invented_numbers(self) -> None:
+        # The specific failure mode: not a fabricated fact stated plainly, but
+        # "typically around" and "most shops charge", which read as caveats and
+        # are fabrications.
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert "typically around" in stable.lower()
+
+
+class TestProspectDataIsExcluded:
+    def test_scanning_machinery_never_reaches_the_model(self) -> None:
+        # The runtime-context payload also carries a whole prospect-scanning
+        # product. `known_companies` alone can be twenty thousand company
+        # names, and sending another tenant's prospect list into a text
+        # generator is a data-exposure question we do not need to have.
+        context = {
+            **CONTEXT,
+            "known_companies": ["acme roofing", "dominion realty partners"],
+            "pipeline": {"stages": [{"key": "4 - Active Pursuit"}]},
+            "scoring_strategy": {"weights": {"fit": 0.4}},
+            "lead_scoring": {"overall_weights": {"a": 1}},
+            "discovery_project_signals": {"trigger": "permit"},
+        }
+        stable, volatile = compose(
+            template=TEMPLATE, context=context, slots=SlotResolution()
+        ).split()
+        whole = stable + volatile
+        assert "acme roofing" not in whole
+        assert "Active Pursuit" not in whole
+        assert "overall_weights" not in whole
+        assert "discovery_project_signals" not in whole
+
+
+class TestCacheBreakpoint:
+    def test_the_stable_half_is_identical_across_templates_for_one_org(self) -> None:
+        # The whole reason for the split: the org context is the bulk of the
+        # tokens and repeats across every article a shop gets.
+        other = TEMPLATE.model_copy(update={"service_key": "brake-fluid"})
+        first, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        second, _ = compose(
+            template=other, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert first == second
+
+    def test_the_volatile_half_differs_between_templates(self) -> None:
+        other = TEMPLATE.model_copy(update={"service_key": "brake-fluid"})
+        _, first = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        _, second = compose(
+            template=other, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert first != second
+
+
+class TestRegenerationNote:
+    def test_a_regeneration_tells_the_model_not_to_imitate(self) -> None:
+        _, volatile = compose(
+            template=TEMPLATE,
+            context=CONTEXT,
+            slots=SlotResolution(),
+            regenerating=True,
+        ).split()
+        assert "REGENERATION" in volatile
+
+    def test_a_first_generation_carries_no_such_note(self) -> None:
+        _, volatile = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        assert "REGENERATION" not in volatile
