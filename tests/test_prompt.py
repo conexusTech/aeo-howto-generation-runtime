@@ -52,14 +52,61 @@ CONTEXT = {
 
 
 class TestDifferentiationInstruction:
-    def test_the_prompt_asks_for_structural_variation_not_rewording(self) -> None:
+    def test_the_prompt_asks_for_rewriting_within_a_FIXED_procedure(self) -> None:
+        # 🔴 This test asserted the OPPOSITE until 2026-09-04, under the name
+        # `..._asks_for_structural_variation_not_rewording`, and it kept passing
+        # after the content model was inverted — because it only checked that
+        # the word "order" appeared, and the new instruction says "keep them IN
+        # ORDER". A substring assertion survived a reversal of meaning.
+        #
+        # The model changed on product direction: the template now carries the
+        # PROCEDURE, authored by someone who knows the trade. The generator
+        # rewrites how it is said; it does not decide what the steps are.
         stable, _ = compose(
             template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
         ).split()
-        lowered = stable.lower()
-        assert "order" in lowered
+        lowered = " ".join(stable.lower().split())
+        assert "keep every step" in lowered
+        assert "in order" in lowered
+        assert "rewrite each step" in lowered
         assert "emphasis" in lowered.replace("emphasise", "emphasis")
         assert "examples" in lowered
+
+    def test_the_prompt_does_NOT_invite_the_model_to_restructure(self) -> None:
+        # The control for the test above. Without it, a prompt that said both
+        # things — keep the order, and also choose your own — would pass, and
+        # that is the state this codebase was actually in.
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        lowered = " ".join(stable.lower().split())
+        assert "one option among many" not in lowered
+        assert "not a spine to hang copy on" not in lowered
+
+    def test_the_intro_and_conclusion_are_asked_for_explicitly(self) -> None:
+        # The other half of the product direction: steps are preserved, but the
+        # opening and closing are written fresh per shop. Without this the model
+        # would carry the template's intro through unchanged, and every shop
+        # would open with the same paragraph.
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        lowered = " ".join(stable.lower().split())
+        assert "new opening" in lowered
+        assert "new closing" in lowered
+
+    def test_reordering_alone_is_called_out_as_insufficient(self) -> None:
+        # Measured, not assumed: shuffling a paragraph's sentences leaves MinHash
+        # similarity at ~0.53 because the 5-word shingles survive, while genuinely
+        # rewriting them takes it to 0.0. A model told only to "shuffle" would
+        # produce output our own duplication metric flags as near-identical.
+        stable, _ = compose(
+            template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
+        ).split()
+        # ⚠️ Whitespace-normalised: the prompt is hard-wrapped, so this
+        # phrase spans a line break and a naive substring check misses it.
+        flat = " ".join(stable.lower().split())
+        assert "reordering alone is not enough" in flat
 
     def test_the_prompt_explains_the_consequence_of_duplication(self) -> None:
         # Index filtering, not a penalty. A model told "do not duplicate" and a
@@ -70,7 +117,7 @@ class TestDifferentiationInstruction:
         ).split()
         assert "indexed" in stable.lower()
 
-    def test_the_template_is_framed_as_subject_matter_not_a_spine(self) -> None:
+    def test_the_template_is_framed_as_the_procedure_to_preserve(self) -> None:
         _, volatile = compose(
             template=TEMPLATE, context=CONTEXT, slots=SlotResolution()
         ).split()

@@ -40,22 +40,45 @@ exhaustiveness does not. Where a step is genuinely dangerous or needs equipment
 a person will not have, say so plainly rather than writing around it — that is
 itself a mark of expertise.
 
+THE STEPS ARE NOT YOURS TO INVENT.
+The source template carries the PROCEDURE, written by a person who knows the
+trade. Those steps are the article's factual content and they are correct.
+You are rewriting how they are said, for this shop — not deciding what they are.
+
+- Keep EVERY step. Do not add one, do not drop one, do not merge two.
+- Keep them IN ORDER. A procedure read out of sequence is a wrong procedure,
+  and on some jobs a dangerous one.
+- Keep each step's MEANING and every fact inside it — a torque figure, an
+  interval, a part name, a warning. If a step says the water pump is driven off
+  the same belt, your version says that too.
+
 WHAT MAKES ONE OF THESE ARTICLES FAIL.
-Many shops are given the same source template. If the articles come back as one
-article with the names changed, search and retrieval collapse them onto each
-other: one gets indexed and the others are quietly suppressed. Every shop is
-then paying for a page nobody will ever be shown. Rewording sentences does not
-avoid this. Genuinely different structure does.
+Many shops are given the same template. If the articles come back as one article
+with the names changed, search and retrieval collapse them onto each other: one
+gets indexed and the others are quietly suppressed. Every shop is then paying
+for a page nobody will ever be shown.
+
+Because the steps are fixed, ALL of the difference has to come from the writing.
+That is a higher bar than it sounds, and swapping a few words for synonyms does
+not clear it.
 
 So, for this shop specifically:
-- Choose an ORDER that suits how this shop actually works. The source template's
-  section order is one option among many, not a spine to hang copy on.
-- Choose what to EMPHASISE. A shop specialising in fleet work should dwell on
-  different failure modes than one doing mostly retail walk-ins.
+- REWRITE each step in your own sentences. Not a paraphrase of the template's
+  sentence — a different sentence that carries the same fact. Where a step has
+  several sentences, you may also reorder them, but reordering ALONE is not
+  enough: the same words in a new order still reads as the same text.
+- Choose what to EMPHASISE within a step. A fleet specialist should dwell on
+  different failure modes than a shop doing mostly retail walk-ins.
 - Use EXAMPLES drawn from this shop's stated services, customers and region.
-- Vary the DEPTH per section. Not every section deserves equal length, and equal
+- Vary the DEPTH per step. Not every step deserves equal length, and equal
   length across every shop is itself a duplication signal.
 - Write in this shop's voice where one is given.
+
+THE INTRO AND THE CONCLUSION ARE YOURS.
+Write a NEW opening and a NEW closing for this shop. Do not reuse the
+template's, and do not write the generic ones every shop could use. They are
+where this article gets to sound like it came from this shop rather than from a
+library, so ground them in what you were told about it.
 
 FACTS: USE ONLY WHAT YOU ARE GIVEN.
 Every fact about the shop is supplied below under RESOLVED FACTS. That list is
@@ -230,14 +253,19 @@ def _template_block(template: Template) -> str:
     if template.description:
         lines.append(f"- Notes: {template.description}")
     if template.sections:
-        lines.append("\nThe template's own sections, for SUBJECT MATTER only:")
+        lines.append(
+            "\nTHE PROCEDURE. Every `step` and `tip` below is content to keep, "
+            "reworded. `intro` and `outro` are the template's own and are NOT "
+            "to be reused — write your own, per the instruction above."
+        )
         for section in template.sections:
             lines.append(f"\n[{section.type}] {section.heading}")
             lines.append(section.body_md)
         lines.append(
-            "\nTreat the above as a brief. Reusing its sentences, its section "
-            "order or its headings verbatim is the failure described earlier — "
-            "every other shop was given exactly this text."
+            "\nKeep every step above, in this order, with its facts intact. "
+            "Rewrite the SENTENCES — reusing them verbatim is the failure "
+            "described earlier, because every other shop was handed exactly "
+            "this text."
         )
     return "\n".join(lines)
 
