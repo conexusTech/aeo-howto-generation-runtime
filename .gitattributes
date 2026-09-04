@@ -1,0 +1,18 @@
+# Normalise to LF in the repository, always.
+#
+# 🔴 This file is why this repo will not repeat `aeo-howto-web`'s problem. That
+# repo has no `.gitattributes`, `core.autocrlf` is `true` on this machine, and
+# the result is 9,216 prettier errors — every one `Delete ␍` — which makes its
+# gate unfixable on a Windows checkout while passing cleanly on Linux CI. The
+# defect is invisible to whoever committed it and unavoidable for whoever
+# clones it next.
+#
+# `scripts/gate.sh` matters most: a shell script with CRLF line endings fails on
+# Linux with `bad interpreter: /usr/bin/env bash^M`, which names neither the
+# file nor the cause.
+* text=auto eol=lf
+
+# Binary — never touched.
+*.png binary
+*.jpg binary
+*.woff2 binary
