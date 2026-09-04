@@ -11,6 +11,10 @@ The criteria under test:
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from app.howto_generation.contracts import CorpusArticle, Section
@@ -89,12 +93,45 @@ class TestShingles:
 
 class TestMinHash:
     def test_the_signature_is_deterministic_across_calls(self) -> None:
-        # 🔴 The property the whole stored history depends on. Python randomises
-        # `hash()` per process, so a MinHash built on it changes every run while
-        # still returning plausible numbers in [0, 1] — a silent failure that
-        # would turn the calibration data into noise.
+        # Same-process stability. Necessary, and NOWHERE NEAR sufficient — see
+        # the cross-process test below, which is the one that matters.
         target = shingles(normalize(BODY_A))
         assert signature(target, 64) == signature(target, 64)
+
+    def test_the_signature_is_identical_in_a_FRESH_PROCESS(self) -> None:
+        # 🔴 **The test that actually guards the property.** The one above ran
+        # alone until 2026-09-04 and was structurally blind to the exact failure
+        # its comment named: `hash()` IS stable within a process — Python
+        # randomises it BETWEEN processes. A review swapped `_stable_hash` for
+        # `hash()` and all 127 tests passed.
+        #
+        # So the check has to cross a process boundary. Two fresh interpreters,
+        # each printing a signature of the same text; a `hash()`-based
+        # implementation gives two different answers here and this reddens.
+        probe = (
+            "from app.howto_generation.similarity import "
+            "normalize, shingles, signature; "
+            "print(signature(shingles(normalize('the quick brown fox jumps "
+            "over the lazy dog and then runs away again')), 8))"
+        )
+        runs = [
+            subprocess.run(
+                [sys.executable, "-c", probe],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=Path(__file__).resolve().parent.parent,
+            ).stdout.strip()
+            for _ in range(2)
+        ]
+        # Control: the probe must actually have produced a signature. Without
+        # this, two empty strings would compare equal and pass vacuously —
+        # which is the same defect class this test exists to close.
+        assert runs[0].startswith("("), f"probe produced no signature: {runs[0]!r}"
+        assert runs[0] == runs[1], (
+            "signature differs between processes — `_stable_hash` is not "
+            f"process-stable: {runs[0]} vs {runs[1]}"
+        )
 
     def test_the_signature_does_not_depend_on_set_iteration_order(self) -> None:
         # Python set ordering varies with insertion history; the signature is a
@@ -120,6 +157,27 @@ class TestMinHash:
         # Jaccard is undefined on two empty sets. Of the two available answers,
         # only 0.0 avoids reporting a data-loading bug as maximum duplication.
         assert exact_jaccard(set(), set()) == 0.0
+
+    def test_two_empty_SIGNATURES_score_zero_not_one(self) -> None:
+        # 🔴 The test above has the right name and tests the wrong function.
+        # `exact_jaccard` is not on the measurement path; `estimate_jaccard`
+        # is, and it returned **1.0** here until 2026-09-04 — a perfect
+        # duplicate — because its `if not left` guard only catches a
+        # zero-length tuple, while `signature()` returns `num_perm` sentinels.
+        # Found by review; reproduced before fixing.
+        assert estimate_jaccard(signature(set(), 64), signature(set(), 64)) == 0.0
+
+    def test_an_empty_document_is_not_a_duplicate_of_a_real_one(self) -> None:
+        # The asymmetric case, which the sentinel guard must also cover.
+        real = signature(shingles(normalize(BODY_A)), 64)
+        assert estimate_jaccard(signature(set(), 64), real) == 0.0
+        assert estimate_jaccard(real, signature(set(), 64)) == 0.0
+
+    def test_control_a_real_document_still_matches_itself(self) -> None:
+        # Control for the two above: proves the new empty-signature guard did
+        # not simply make everything score zero.
+        real = signature(shingles(normalize(BODY_A)), 64)
+        assert estimate_jaccard(real, real) == 1.0
 
     def test_mismatched_signature_lengths_are_an_error(self) -> None:
         with pytest.raises(ValueError):

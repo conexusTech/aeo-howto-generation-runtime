@@ -130,10 +130,18 @@ class TestParsing:
         )
         assert len(article.sections) == 1
 
-    def test_image_alt_survives_parsing(self) -> None:
-        # Alt text is what blocks publication on the gateway side, so losing it
-        # here would produce an article that cannot be published for a reason
-        # nobody can see.
+    def test_image_fields_from_the_model_are_dropped(self) -> None:
+        # ⚠️ **This test asserted the OPPOSITE until 2026-09-04**, under the
+        # name `test_image_alt_survives_parsing`, reasoning that alt text gates
+        # publication so losing it would strand an article. The reasoning was
+        # sound about alt text and wrong about where it comes from: images are
+        # attached by a human in the editor, which is the only place the asset
+        # key can be checked against the org. Nothing the model emits here was
+        # ever a real image.
+        #
+        # Carrying the fields through was a cross-tenant asset vector — see the
+        # 🔴 in `parse_article`. The test is inverted rather than deleted so the
+        # next reader meets the reasoning instead of repeating it.
         article = parse_article(
             wire(
                 [
@@ -147,7 +155,10 @@ class TestParsing:
                 ]
             )
         )
-        assert article.sections[0].image_alt == "a worn belt"
+        assert article.sections[0].image_alt is None
+        assert article.sections[0].image_asset_key is None
+        # Control: the section itself is kept, not dropped.
+        assert article.sections[0].heading == "A"
 
     def test_an_empty_payload_yields_no_sections(self) -> None:
         assert parse_article({"title": "T", "sections_json": ""}).sections == []
@@ -171,3 +182,81 @@ class TestFake:
         scripted = GeneratedArticle(title="Scripted", sections=[])
         fake = FakeChatModel(scripted)
         assert fake.generate(prompt=PromptComposition(stable="", volatile="")) is scripted
+
+
+class TestModelCannotSmuggleAssetKeys:
+    """🔴 A shop's own profile text reaches the prompt, so the model can be
+    asked to emit fields the tool schema never declared. These stay dropped."""
+
+    def test_an_image_asset_key_from_the_model_is_discarded(self) -> None:
+        # The attack: prose in the org description tells the model to add
+        # `image_asset_key` naming ANOTHER org's asset. The tool schema does not
+        # declare the field, but `sections_json` is a free string we parse
+        # ourselves, so nothing upstream stops it arriving.
+        article = parse_article(
+            {
+                "title": "Timing belts",
+                "sections_json": json.dumps(
+                    [
+                        {
+                            "type": "intro",
+                            "heading": "Why this matters",
+                            "body_md": "A belt is a wear item.",
+                            "image_asset_key": (
+                                "organizations/"
+                                "99999999-9999-9999-9999-999999999999"
+                                "/howto/hero.png"
+                            ),
+                            "image_alt": "someone else's photo",
+                        }
+                    ]
+                ),
+            }
+        )
+        assert len(article.sections) == 1
+        assert article.sections[0].image_asset_key is None
+        assert article.sections[0].image_alt is None
+
+    def test_control_the_rest_of_the_section_still_survives(self) -> None:
+        # Control: proves the assertions above are not passing because the
+        # section was dropped wholesale, which would look identical.
+        article = parse_article(
+            {
+                "title": "Timing belts",
+                "sections_json": json.dumps(
+                    [
+                        {
+                            "type": "step",
+                            "heading": "Check the interval",
+                            "body_md": "Start with the manufacturer interval.",
+                            "image_asset_key": "organizations/x/howto/a.png",
+                        }
+                    ]
+                ),
+            }
+        )
+        assert len(article.sections) == 1
+        assert article.sections[0].heading == "Check the interval"
+        assert article.sections[0].body_md == "Start with the manufacturer interval."
+
+    def test_a_malformed_asset_key_no_longer_discards_the_whole_article(self) -> None:
+        # Previously `image_asset_key={"k": "v"}` reached the Section
+        # constructor and pydantic raised, throwing away a complete article and
+        # the ~30k tokens paid for it over one optional field.
+        article = parse_article(
+            {
+                "title": "Timing belts",
+                "sections_json": json.dumps(
+                    [
+                        {
+                            "type": "intro",
+                            "heading": "A",
+                            "body_md": "B",
+                            "image_asset_key": {"k": "v"},
+                        },
+                        {"type": "step", "heading": "C", "body_md": "D"},
+                    ]
+                ),
+            }
+        )
+        assert [s.heading for s in article.sections] == ["A", "C"]

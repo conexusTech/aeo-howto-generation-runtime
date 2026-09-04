@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from functools import lru_cache
 
 from app.howto_generation.contracts import CorpusArticle, SimilarityMeasurement
 
@@ -121,7 +122,8 @@ def _stable_hash(value: str) -> int:
     return int.from_bytes(digest, "big") & _MAX_HASH
 
 
-def _permutation_params(num_perm: int) -> list[tuple[int, int]]:
+@lru_cache(maxsize=8)
+def _permutation_params(num_perm: int) -> tuple[tuple[int, int], ...]:
     """Deterministic (a, b) coefficients for `(a*h + b) mod p`.
 
     Derived from blake2b of the index rather than from `random.Random(seed)`.
@@ -129,6 +131,28 @@ def _permutation_params(num_perm: int) -> list[tuple[int, int]]:
     output is an implementation detail of CPython and this one is a written-down
     function of the index — and these coefficients have to outlive several
     Python upgrades for the stored scores to stay comparable.
+
+    Cached because it is a pure function of `num_perm` and was recomputed on
+    every `signature()` call. `maxsize=8` because in practice there is exactly
+    one value (256); the headroom is for tests.
+
+    ⚠️ **This cache is a tidiness win, NOT the throughput fix it was first
+    written up as.** A 2026-09-04 review reported the coefficient derivation as
+    the cause of a ~20s stall at the corpus cap. Caching it changed the measured
+    time by nothing (2.11s vs 2.07s for 20 articles), and a profile said why:
+    `_stable_hash` accounts for 0.078s, while **16.1M** evaluations of the
+    `(a*h + b) % _PRIME` inner loop account for 2.9s. The cost is the MinHash
+    itself, not its setup.
+
+    The review's absolute numbers were also measured on synthetic 3000-word
+    bodies. A real generated article is ~939 tokens / 932 shingles, so the true
+    worst case at the gateway's 200-article cap is **6.5s**, not ~21s. Still
+    enough GIL-held CPU to delay `GET /ping` in a `--workers 1` container —
+    `run_in_threadpool` moves the blocking socket off the loop but not the CPU
+    — so it is a real defect, just a smaller one than reported. Reducing it
+    means changing the inner loop without changing the arithmetic, because the
+    stored scores are only comparable while every one was computed identically.
+    Tracked as `bound-similarity-cpu-cost`; not done here.
     """
     params: list[tuple[int, int]] = []
     for i in range(num_perm):
@@ -137,7 +161,7 @@ def _permutation_params(num_perm: int) -> list[tuple[int, int]]:
         a = (int.from_bytes(a_digest, "big") % (_PRIME - 1)) + 1  # a must be non-zero
         b = int.from_bytes(b_digest, "big") % _PRIME
         params.append((a, b))
-    return params
+    return tuple(params)
 
 
 def signature(shingle_set: set[str], num_perm: int = 256) -> tuple[int, ...]:
@@ -162,12 +186,37 @@ def estimate_jaccard(left: tuple[int, ...], right: tuple[int, ...]) -> float:
     Accurate to roughly 1/sqrt(num_perm) — about 6% at the default 256. The
     tests bound it against `exact_jaccard` rather than asserting exact values,
     because asserting an estimator's exact output is asserting the seed.
+
+    🔴 **An all-sentinel signature scores 0.0, not 1.0.** `signature()` returns
+    `num_perm` copies of `_PRIME` for a document with no shingles, so two
+    empty documents agree in every position and the naive estimate is a
+    PERFECT DUPLICATE. The guard below was `if not left`, which is only true
+    for a zero-length tuple and therefore never fired — the docstring on
+    `signature()` claimed this case was "handled explicitly here" and it was
+    not. Found by review 2026-09-04 and reproduced: `estimate_jaccard(
+    signature(set()), signature(set())) == 1.0`.
+
+    It matters on the real path: if a generated article's body normalises to
+    no tokens and a corpus article does too, `measure()` reports score 1.0
+    against a named neighbour — a fabricated near-duplicate, in the one number
+    this module exists to produce honestly. Jaccard is undefined on two empty
+    sets; of the two available answers only 0.0 avoids reporting a data-loading
+    bug as maximum duplication.
     """
     if len(left) != len(right):
         raise ValueError("signatures must have the same permutation count")
     if not left:
         return 0.0
+    if _is_empty_signature(left) or _is_empty_signature(right):
+        return 0.0
     return sum(1 for a, b in zip(left, right) if a == b) / len(left)
+
+
+def _is_empty_signature(sig: tuple[int, ...]) -> bool:
+    """True when every position is the `_PRIME` sentinel `signature()` emits for
+    a document with no shingles. Keyed on the sentinel rather than on length,
+    which is what the original guard got wrong."""
+    return all(value == _PRIME for value in sig)
 
 
 def exact_jaccard(left: set[str], right: set[str]) -> float:
