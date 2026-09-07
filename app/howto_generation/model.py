@@ -61,20 +61,36 @@ class FakeChatModel(ChatModel):
         self.calls.append(prompt)
         if self._article is not None:
             return self._article
+        # ⚠️ Deliberately trade-NEUTRAL placeholder text, and it reads as
+        # placeholder on purpose.
+        #
+        # This was a timing-belt article until 2026-09-07, which meant a
+        # developer running the stub against a dental practice or a roofer got
+        # automotive copy — the one thing this runtime must never do. It also
+        # read plausibly enough to be mistaken for real output. Canned text
+        # should be obviously canned.
         return GeneratedArticle(
-            title="How to replace a timing belt",
+            title="Stub article (canned — no model was called)",
             sections=[
                 Section(
                     type="intro",
                     position=1,
                     heading="Why this matters",
-                    body_md="A timing belt failure is not a repair you schedule.",
+                    body_md=(
+                        "This is placeholder text from the stub model. No "
+                        "language model was called and nothing here describes "
+                        "any real business."
+                    ),
                 ),
                 Section(
                     type="step",
                     position=2,
-                    heading="Check the service interval",
-                    body_md="Start with the manufacturer interval for the engine.",
+                    heading="First step",
+                    body_md=(
+                        "Placeholder step body. Set "
+                        "HOWTO_GENERATION_USE_STUB_MODEL=false to generate a "
+                        "real article."
+                    ),
                 ),
             ],
         )
