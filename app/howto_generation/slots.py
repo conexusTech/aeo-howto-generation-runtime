@@ -173,9 +173,19 @@ def _text(value: Any) -> str | None:
 
     An onboarding blob can hold anything; `str(value)` on an unexpected type is
     how `{'city': None}` becomes the literal copy "None" in a published article.
+
+    ⚠️ Whitespace is COLLAPSED, not just trimmed, and that is a containment
+    property rather than tidiness. Resolved values are emitted by
+    `_facts_block` into the prompt's volatile half, which carries no data
+    fence — so an interior newline in a tenant-authored field (`name`,
+    `address`, `website`, `industry`) lets the value read as a fresh
+    top-level instruction directly beneath "RESOLVED FACTS (this list is
+    complete)". Trimming the ends alone left that open. Raised in review
+    2026-09-07 alongside the nested-marker fence escape; same control, easier
+    path.
     """
     if isinstance(value, str) and value.strip():
-        return value.strip()
+        return " ".join(value.split())
     return None
 
 
