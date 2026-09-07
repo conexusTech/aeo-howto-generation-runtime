@@ -21,6 +21,8 @@ context, and which are not available at any price.
 
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 from app.howto_generation.contracts import SlotResolution, TemplateSlot
@@ -106,6 +108,66 @@ _COUNTRY_TOKENS = frozenset(
 )
 
 
+#: US states and Canadian provinces, by full name. Needed because a
+#: two-component address may end in either a code ("Grand Rapids, MI") or a
+#: name ("Widefield, Colorado"), and only by recognising both can the CITY be
+#: told apart from the region beside it.
+#:
+#: 🔴 Before this existed, `"Widefield, Colorado"` derived the city as
+#: **"Colorado"** — the region, published as the locality. The docblock on
+#: `derive_city` claimed its failures were "silent omissions rather than wrong
+#: copy"; for that format the claim was false.
+_REGION_NAMES = frozenset(
+    {
+        "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+        "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+        "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+        "maine", "maryland", "massachusetts", "michigan", "minnesota",
+        "mississippi", "missouri", "montana", "nebraska", "nevada",
+        "new hampshire", "new jersey", "new mexico", "new york",
+        "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+        "pennsylvania", "rhode island", "south carolina", "south dakota",
+        "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+        "west virginia", "wisconsin", "wyoming", "district of columbia",
+        # Canadian provinces and territories.
+        "alberta", "british columbia", "manitoba", "new brunswick",
+        "newfoundland and labrador", "nova scotia", "ontario",
+        "prince edward island", "quebec", "saskatchewan",
+        "northwest territories", "nunavut", "yukon",
+    }
+)
+
+#: A region code or name optionally trailed by a postal code — "TN 37210",
+#: "IL 62701", "ON K1A 0B1". Matched as a unit so a state-plus-ZIP component
+#: is recognised as a region marker rather than mistaken for a street.
+_REGION_WITH_POSTAL = re.compile(
+    r"^(?P<region>[A-Za-z][A-Za-z .]*?)\s+[A-Za-z0-9][A-Za-z0-9 -]*\d[A-Za-z0-9 -]*$"
+)
+
+
+def _is_region_marker(part: str) -> bool:
+    """Is this component a state, province or country rather than a city?
+
+    Deliberately narrow. Anything it does not recognise is left in place and
+    handled by the street/venue rule, because treating an unknown component as
+    a region is how a city gets discarded.
+    """
+    text = part.strip()
+    lowered = text.lower()
+    if lowered in _COUNTRY_TOKENS or lowered in _REGION_NAMES:
+        return True
+    if len(text) == 2 and text.isalpha() and text.isupper():
+        return True  # a state or province code
+    match = _REGION_WITH_POSTAL.match(text)
+    if match is not None:
+        region = match.group("region").strip().lower()
+        return (
+            region in _REGION_NAMES
+            or (len(region) == 2 and region.isalpha())
+        )
+    return False
+
+
 def _text(value: Any) -> str | None:
     """A non-blank string, or nothing. Numbers are deliberately NOT coerced.
 
@@ -139,30 +201,57 @@ def derive_city(address: str | None) -> str | None:
     org record has no structured city column — `organization.address` is one
     free-text line from the company-profile step — so the choice is between
     inferring a city and shipping articles with no locality at all, which
-    removes most of what "localization slots" means.
+    removes most of what "localization slots" means. The value is marked
+    `derived:` in provenance so a reviewer can see it was not read from a field.
 
-    The rule errs hard toward omission, and the value it returns is marked
-    `derived:` in provenance so a reviewer can see it was not read from a field:
+    The rule works from the RIGHT, which is the fix. Region and country
+    components are stripped off the end first; whatever survives is the address
+    proper, and only then is a leading street or venue name discarded.
 
-    1. The first component is discarded unread. It is the street or the venue
-       name, and a business called "Acme Auto" would otherwise be published as a
-       city.
-    2. Of what remains, exactly ONE component must look like a city. Two
-       candidates means the format is not one we recognise, and a coin flip
-       between them is a fabricated value that happens to be well-formed.
+    🔴 It used to work from the left — discard the first component unread, then
+    look for exactly one city-shaped component among the rest. That is correct
+    only when a street component exists, and produced three defects on real
+    data (measured across every org with geography, 2026-09-07):
 
-    So `"123 Main St, Springfield, IL 62701, USA"` yields `Springfield`, while
-    `"Acme Auto, 123 Main St"` and `"Main Street"` yield nothing at all.
+        "Colorado Springs, CO"    -> None        (city discarded as a street)
+        "Grand Rapids, MI"        -> None        (same)
+        "Widefield, Colorado"     -> "Colorado"  (the REGION as the city)
+        "Nashville, Tennessee"    -> "Tennessee" (same)
+        "Springfield, IL, USA"    -> None
 
-    The real fix is a structured locality field in onboarding; until then this
-    is the honest approximation, and its false negatives are silent omissions
-    rather than wrong copy.
+    Two of those publish a wrong locality rather than omitting one, which the
+    old docblock explicitly promised could not happen. Two of the three orgs
+    holding a location were affected.
+
+    Still errs toward omission where the format is genuinely unreadable:
+    `"Acme Auto, 123 Main St"` and `"Main Street"` yield nothing, because a
+    business name published as a city is worse than no city.
+
+    The real fix remains a structured locality field in onboarding; this is the
+    honest approximation until there is one.
     """
     if not address or not address.strip():
         return None
+
     parts = [p.strip() for p in address.split(",") if p.strip()]
     if len(parts) < 2:
         return None  # a single line is a street, not an address we can read
+
+    # Strip region and country components off the end. What remains is the
+    # address proper — street and locality, in that order.
+    while len(parts) > 1 and _is_region_marker(parts[-1]):
+        parts.pop()
+    if _is_region_marker(parts[-1]):
+        return None  # every component was a region; there is no locality here
+
+    if len(parts) == 1:
+        # No street component survived, so this component IS the locality —
+        # the "City, ST" and "City, State" shapes.
+        return parts[0] if _looks_like_city(parts[0]) else None
+
+    # A street or venue leads; exactly one of the rest must look like a city.
+    # Two candidates means a format we do not recognise, and a coin flip
+    # between them is a fabricated value that happens to be well-formed.
     candidates = [p for p in parts[1:] if _looks_like_city(p)]
     if len(candidates) != 1:
         return None

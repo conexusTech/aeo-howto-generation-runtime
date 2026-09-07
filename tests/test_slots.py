@@ -9,6 +9,8 @@ Every test here maps to one of the three acceptance criteria:
 
 from __future__ import annotations
 
+import pytest
+
 from app.howto_generation.contracts import TemplateSlot
 from app.howto_generation.slots import (
     PRICING_SLOTS,
@@ -195,3 +197,64 @@ class TestAudit:
         used = inputs_used(result)
         assert used == sorted(used)
         assert len(used) == len(set(used))
+
+class TestDeriveCityWorksFromTheRight:
+    """🔴 Regression cover for three defects measured on real org data.
+
+    `derive_city` used to discard the FIRST comma component unread, assuming a
+    street or venue name. That is correct only when a street exists. Measured
+    across every org holding a location (2026-09-07), two of three were wrong:
+
+        "Colorado Springs, CO"  -> None        (the city, discarded as a street)
+        "Widefield, Colorado"   -> "Colorado"  (the REGION, as the city)
+
+    The second is the serious one: it publishes a wrong locality rather than
+    omitting one, which the function's own docblock promised could not happen.
+    """
+
+    @pytest.mark.parametrize(
+        "address,expected",
+        [
+            # Two components — no street. The first IS the city.
+            ("Colorado Springs, CO", "Colorado Springs"),
+            ("Grand Rapids, MI", "Grand Rapids"),
+            # …and with the region spelled out rather than coded.
+            ("Widefield, Colorado", "Widefield"),
+            ("Nashville, Tennessee", "Nashville"),
+            ("Toronto, Ontario", "Toronto"),
+            # A trailing country is stripped like any other region marker.
+            ("Springfield, IL, USA", "Springfield"),
+            # Three-plus components — a street leads, as before.
+            ("1124 Menzler Rd, Nashville, TN 37210", "Nashville"),
+            ("123 Main St, Springfield, IL 62701, USA", "Springfield"),
+        ],
+    )
+    def test_the_city_is_found(self, address: str, expected: str) -> None:
+        assert derive_city(address) == expected
+
+    @pytest.mark.parametrize(
+        "address",
+        [
+            # CONTROLS. Omission is still correct where the format is genuinely
+            # unreadable — a business name published as a city is worse than no
+            # city, which is why the street/venue rule survives.
+            "Acme Auto, 123 Main St",
+            "Main Street",
+            "",
+            # Every component is a region: there is no locality to find.
+            "Colorado, USA",
+            "CO, USA",
+        ],
+    )
+    def test_an_unreadable_address_still_yields_nothing(self, address: str) -> None:
+        assert derive_city(address) is None
+
+    def test_a_region_is_never_returned_as_a_city(self) -> None:
+        # The invariant, asserted over every region name rather than a sample —
+        # this is the class of bug, not one instance of it.
+        from app.howto_generation.slots import _REGION_NAMES
+
+        for region in sorted(_REGION_NAMES):
+            got = derive_city(f"Somewhereville, {region.title()}")
+            assert got == "Somewhereville", f"{region}: got {got!r}"
+
