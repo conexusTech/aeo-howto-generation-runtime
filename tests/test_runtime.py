@@ -108,6 +108,93 @@ class TestProducesADraft:
         assert result.error_code == "EMPTY_ARTICLE"
 
 
+class TestCoversItsTemplate:
+    """🔴 The runtime must ACT on the completeness check, not merely import it.
+
+    `tests/test_completeness.py` proves the check works. It proved nothing
+    about whether `runtime.handle` calls it: disabling the branch entirely left
+    all 151 tests green, because this file's `TEMPLATE` has `sections=[]` and a
+    template that demands nothing can never be under-delivered. Found by
+    mutation, not by reading.
+    """
+
+    # A template that actually asks for something — intro, two steps, outro.
+    FULL = Template(
+        id=TEMPLATE.id,
+        service_key=TEMPLATE.service_key,
+        vertical=TEMPLATE.vertical,
+        title=TEMPLATE.title,
+        description=TEMPLATE.description,
+        sections=[
+            Section(type="intro", position=1, heading="Why", body_md="B"),
+            Section(type="step", position=2, heading="First", body_md="B"),
+            Section(type="step", position=3, heading="Second", body_md="B"),
+            Section(type="outro", position=4, heading="Book it", body_md="B"),
+        ],
+        slots=[],
+    )
+
+    def _generated(self, *types: str) -> GeneratedArticle:
+        return GeneratedArticle(
+            title="T",
+            sections=[
+                Section(type=t, position=i + 1, heading=f"H{i}", body_md="B")
+                for i, t in enumerate(types)
+            ],
+        )
+
+    def test_a_missing_conclusion_is_a_named_refusal(self) -> None:
+        # Exactly what the live model returned on 2026-09-07: intro, steps,
+        # then nothing.
+        result = run(
+            request(template=self.FULL),
+            FakeChatModel(self._generated("intro", "step", "step")),
+        )
+        assert isinstance(result, ErrorResponse)
+        assert result.error_code == "INCOMPLETE_ARTICLE"
+        assert "no conclusion was written" in result.message
+
+    def test_a_dropped_step_is_a_named_refusal(self) -> None:
+        result = run(
+            request(template=self.FULL),
+            FakeChatModel(self._generated("intro", "step", "outro")),
+        )
+        assert isinstance(result, ErrorResponse)
+        assert result.error_code == "INCOMPLETE_ARTICLE"
+        assert "1 of 2 steps were written" in result.message
+
+    def test_CONTROL_a_complete_article_is_not_refused(self) -> None:
+        # Without this, an implementation that refused everything would pass
+        # both tests above.
+        result = run(
+            request(template=self.FULL),
+            FakeChatModel(self._generated("intro", "step", "step", "outro")),
+        )
+        assert isinstance(result, GenerationResponse)
+
+    def test_a_regeneration_is_not_held_to_the_template(self) -> None:
+        # A regeneration merges against the current article under an edit
+        # policy, so its section set is legitimately not the template's.
+        # Asserting template coverage there would refuse valid edits.
+        result = run(
+            request(
+                template=self.FULL,
+                operation="regenerate",
+                current_article=self._generated(
+                    "intro", "step", "step", "outro"
+                ).sections,
+                generated_baseline=self._generated(
+                    "intro", "step", "step", "outro"
+                ).sections,
+            ),
+            FakeChatModel(self._generated("intro", "step", "step")),
+        )
+        assert not (
+            isinstance(result, ErrorResponse)
+            and result.error_code == "INCOMPLETE_ARTICLE"
+        )
+
+
 class TestSlotsFlowThrough:
     def test_resolved_refused_and_omitted_all_reach_the_response(self) -> None:
         result = run(request())

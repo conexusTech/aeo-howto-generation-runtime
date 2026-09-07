@@ -22,6 +22,7 @@ import logging
 from typing import Any
 
 from app.config import Settings
+from app.howto_generation import completeness
 from app.howto_generation import prompt as prompt_module
 from app.howto_generation import regenerate, similarity, slots
 from app.howto_generation.contracts import (
@@ -85,6 +86,28 @@ def handle(
                 "outside intro/step/tip/outro."
             ),
         )
+
+    # 🔴 Does the article actually cover its template?
+    #
+    # `parse_article` checks each section's SHAPE and never compares the result
+    # to the template, so a generation that dropped a step — or stopped before
+    # the conclusion — was indistinguishable from a correct one. A real Bedrock
+    # run on 2026-09-07 returned intro + three steps and stopped; every other
+    # content-model property held, which is precisely why it would have shipped.
+    #
+    # Checked on the FIRST pass only. A regeneration merges against the current
+    # article under an edit policy, so its section set is legitimately not the
+    # template's — asserting template coverage there would refuse valid edits.
+    if request.operation != "regenerate":
+        missing = completeness.shortfalls(
+            template_sections=request.template.sections,
+            generated_sections=generated.sections,
+        )
+        if missing:
+            return ErrorResponse(
+                error_code="INCOMPLETE_ARTICLE",
+                message=completeness.describe(missing),
+            )
 
     sections: list[Section] = generated.sections
     regeneration_outcome = None
