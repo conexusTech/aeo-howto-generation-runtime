@@ -1,5 +1,63 @@
 # Log
 
+## 2026-09-07
+
+### Learning — a tool schema that makes the MODEL do the escaping is a latent parse failure
+
+`emit_article` declared `sections_json` as a **string containing a JSON-encoded
+array**, so every quote, backslash and newline in the article body had to be
+escaped by the model. It worked six times and failed on the seventh with
+`JSONDecodeError: Expecting ',' delimiter: line 1 column 3107` — from a clean
+`stop_reason=tool_use` at 2029 of 32000 tokens. Nothing was truncated and
+nothing was refused; the model wrote a correct article and mis-escaped one
+character of its own envelope.
+
+Two things made it expensive to read from outside:
+
+- `server.py` maps every exception to `GENERATION_FAILED` and deliberately
+  withholds the detail, so the operator was told **the runtime declined**. It
+  had not declined. "Declined" and "crashed while parsing its own output" want
+  different responses, and the API cannot tell them apart.
+- The traceback was logged and the **payload was not**, so "column 3107" named
+  a character nobody could read back.
+
+⚠️ **Do not assume the endpoint accepts a nested array schema.** The comment
+above the tool records that Mantle refuses `output_config.format` and
+`strict: true`; an array schema could plausibly have been refused as well, and
+deploying on that assumption would have broken generation outright rather than
+fixing it. It was probed against the live endpoint before the change was
+written: accepted, and `sections` arrives decoded with quotes, backslashes and
+newlines intact.
+
+⚠️ **The schema remains a HINT.** Because `strict: true` is refused,
+`additionalProperties: False` on the item schema enforces nothing. Every
+parse-side allowlist stays load-bearing — the unknown-type drop, and the
+`image_asset_key` / `image_alt` drop that stops a shop's own profile text
+inducing the model to publish a competitor's asset.
+
+### Learning — a mutation check that does not apply reports a false green
+
+Three of the mutation checks written for this change were themselves wrong, and
+each looked like a pass:
+
+- a `$`-anchored regex against a **CRLF** file matched nothing, and the gate
+  reported exit 0 for an unmutated tree;
+- multi-line anchors written with `\n` against the same CRLF file matched
+  nothing;
+- one mutation left `) from exc` dangling after an assignment, so the module
+  stopped importing and pytest reported a **collection error** — non-zero, and
+  worthless, because a syntax error reddens every test in the file including
+  ones that assert nothing about the mutated behaviour.
+
+The habit that catches all three: assert the file actually changed, assert the
+module still imports, and require the failure to be a **failure** rather than
+an error.
+
+### Update
+
+`okf/capabilities/howto-article-generation.md` — three scenarios added.
+`okf/qa/howto-article-generation.md` — thirteen checks added.
+
 ## 2026-09-03
 
 - **Update** — Repo created and built: `app/howto_generation/` (contracts, slot
