@@ -178,6 +178,36 @@ Related: [the pipeline](/lib/generation-pipeline.md) ·
 
 **Checked by:** gen-malformed-body-is-typed, gen-missing-template-is-typed, gen-model-failure-is-typed, gen-model-failure-does-not-leak, gen-empty-article-is-typed
 
+#### Scenario: The article body is delivered as structured data, never as text the model must escape
+
+- GIVEN the tool that delivers a finished article
+- WHEN its schema is inspected
+- THEN `sections` is an array of typed objects, and no field asks for JSON-encoded text
+- AND the instructions tell the model that quotes, backslashes and line breaks need no escaping
+- AND a body carrying all three arrives unchanged
+
+**Checked by:** gen-tool-declares-a-real-array, gen-tool-does-not-ask-for-encoded-json, gen-item-schema-pins-required-fields, gen-hostile-body-copied-through, gen-tool-enum-matches-the-contract
+
+#### Scenario: A wrongly shaped section payload fails loudly rather than publishing an empty article
+
+- GIVEN a model that returns one section object instead of an array, or a `sections_json` string that is not valid JSON
+- WHEN the payload is parsed
+- THEN generation fails with a message naming the field and the shape or position at fault
+- AND it never yields an article with no sections, because that is publishable and reads as a success
+- AND an empty `sections` does not shadow a valid legacy payload beside it
+
+**Checked by:** gen-non-list-sections-refused, gen-malformed-legacy-json-refused, gen-empty-array-does-not-shadow-legacy, gen-legacy-string-still-parses
+
+#### Scenario: A decode failure records the text around the fault, not the start of the payload
+
+- GIVEN a payload whose invalid character sits thousands of characters in
+- WHEN the decode fails
+- THEN the log carries a bounded window centred on that character
+- AND the window is far smaller than the payload, because the text is tenant-influenced
+- AND a line break inside it cannot forge a second log record
+
+**Checked by:** gen-decode-window-contains-the-fault, gen-decode-window-is-bounded, gen-decode-log-cannot-be-forged, gen-decode-error-names-its-field
+
 #### Scenario: An additive change to the gateway's context does not break generation
 
 - GIVEN a request carrying context fields and top-level keys this runtime has never seen

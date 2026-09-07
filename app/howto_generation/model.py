@@ -96,6 +96,19 @@ class FakeChatModel(ChatModel):
         )
 
 
+#: The four section types, in READING order — which is also the order the tool
+#: advertises them in, because the sequence is a hint the model uses and
+#: alphabetising it would throw that away. `in` works on a tuple, so the
+#: membership check below reads the same.
+_SECTION_TYPES: tuple[str, ...] = ("intro", "step", "tip", "outro")
+_VALID_TYPES = frozenset(_SECTION_TYPES)
+
+#: Characters of the model's payload logged either side of a decode failure.
+#: Bounded because that text is tenant-influenced and lands in CloudWatch; a
+#: window rather than a head slice because the fault is what needs reading.
+_DECODE_WINDOW = 400
+
+
 #: The article envelope, delivered as a TOOL rather than `output_config.format`.
 #:
 #: 🔴 Structured outputs are documented for Bedrock but the **Mantle** endpoint
@@ -109,10 +122,8 @@ _ARTICLE_TOOL: dict[str, Any] = {
     "description": (
         "Emit the finished article. Call this exactly once — it is the only way "
         "your work is delivered. Do not reply in prose instead; prose is "
-        "discarded. `sections_json` is a JSON-encoded ARRAY of section objects, "
-        'each {"type": "intro"|"step"|"tip"|"outro", "heading": str, '
-        '"body_md": str}. Order the array the way the article should read; '
-        "positions are assigned from that order, so do not include them."
+        "discarded. Order `sections` the way the article should read; positions "
+        "are assigned from that order, so do not include them."
     ),
     "input_schema": {
         "type": "object",
@@ -121,17 +132,58 @@ _ARTICLE_TOOL: dict[str, Any] = {
                 "type": "string",
                 "description": "This article's own title, not the template's.",
             },
-            "sections_json": {
-                "type": "string",
-                "description": "JSON-encoded array of section objects.",
+            # 🔴 A REAL ARRAY, and this is a bug fix rather than a tidy-up.
+            #
+            # This was one `sections_json` STRING holding a JSON-encoded array,
+            # which made the model responsible for escaping every `"`, `\` and
+            # newline across the whole article body by hand. It parsed six times
+            # and then failed on the seventh: `JSONDecodeError: Expecting ','
+            # delimiter: line 1 column 3107` on 2026-09-07, from a clean
+            # `stop_reason=tool_use` with 2029 of 32000 tokens used — nothing
+            # truncated, nothing refused, just prose the model mis-escaped. The
+            # gateway reports any runtime exception as a refusal, so an operator
+            # saw "the generation runtime declined" for a correct article.
+            #
+            # Declaring the array moves the encoding to the API, which is what
+            # removes the failure class instead of handling it. Verified against
+            # the live Mantle endpoint before this change was written: the schema
+            # is accepted and `sections` arrives as a decoded list whose bodies
+            # carry a double quote, a backslash and a newline intact.
+            #
+            # ⚠️ The schema is a HINT, not a constraint. Mantle refuses
+            # `strict: true` (see the note above), so `additionalProperties`
+            # below does not stop a model emitting an extra field — every
+            # section field is still allowlisted in `parse_article`, and that
+            # check is load-bearing security, not belt-and-braces.
+            "sections": {
+                "type": "array",
+                "description": "The article's sections, in reading order.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": list(_SECTION_TYPES),
+                        },
+                        "heading": {"type": "string"},
+                        "body_md": {
+                            "type": "string",
+                            "description": (
+                                "Markdown. Write it literally — quotes, "
+                                "backslashes and line breaks need no escaping."
+                            ),
+                        },
+                    },
+                    "required": ["type", "heading", "body_md"],
+                    "additionalProperties": False,
+                },
             },
         },
-        "required": ["title", "sections_json"],
+        "required": ["title", "sections"],
         "additionalProperties": False,
     },
 }
 
-_VALID_TYPES = {"intro", "step", "tip", "outro"}
 
 
 class BedrockChatModel(ChatModel):
@@ -276,13 +328,100 @@ def parse_article(data: dict[str, Any]) -> GeneratedArticle:
     four types drive rendering, and quietly mapping an invented fifth onto
     `step` publishes something in a shape nobody chose.
     """
-    raw = data.get("sections_json")
+    # `sections` is what the tool now declares, and the API hands it back
+    # already decoded. `sections_json` is the previous shape — a string the
+    # model had to escape by hand — kept readable because a payload already in
+    # flight when this deployed would otherwise parse as an empty article, and
+    # an empty article is the one outcome worse than a loud failure.
+    # Pick the first field carrying anything. Selecting on `is None` instead
+    # would let an EMPTY `sections` shadow a valid `sections_json` beside it,
+    # which is a silent empty article — see the raise below for why that is the
+    # one outcome worth being noisy about.
+    field, raw = next(
+        (
+            (name, value)
+            for name, value in (
+                ("sections", data.get("sections")),
+                ("sections_json", data.get("sections_json")),
+            )
+            if value not in (None, [], "")
+        ),
+        ("sections", data.get("sections")),
+    )
+
     parsed: Any = []
-    if isinstance(raw, str) and raw.strip():
-        parsed = json.loads(raw)
-    elif isinstance(raw, list):
-        # Tolerated: some endpoints hand back an already-decoded array.
+    if isinstance(raw, list):
         parsed = raw
+    elif raw is None or raw == [] or raw == "":
+        # Genuinely absent. An article with no sections is the caller's problem
+        # to reject, and `runtime.handle` does; there is nothing malformed here.
+        parsed = []
+    elif not isinstance(raw, str):
+        # 🔴 A dict, a number, a bool — i.e. the model returned ONE section
+        # object instead of an array, which the schema cannot prevent because
+        # Mantle refuses `strict: true`.
+        #
+        # Falling through to `parsed = []` here is what the first version of
+        # this fix did, and it is the failure this whole change exists to stop:
+        # an empty section list is a publishable article with no content, and
+        # it reaches an operator as a SUCCESS. The legacy string path already
+        # raised for its own malformed input; the primary path must not be
+        # quieter than the one it replaced.
+        logger.error(
+            "%s was %s, not a list; payload=%r",
+            field,
+            type(raw).__name__,
+            repr(raw)[:_DECODE_WINDOW],
+        )
+        raise RuntimeError(
+            f"the model's {field} was {type(raw).__name__}, not an array of "
+            "sections; the payload is in the runtime logs"
+        )
+    elif raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            # 🔴 Log the payload, then fail loudly. Neither half is optional.
+            #
+            # The 2026-09-07 failure was diagnosable only down to "column 3107"
+            # because the traceback was logged and the payload was not, so the
+            # offending character was unrecoverable and this bug could not be
+            # told apart from a different one.
+            #
+            # ⚠️ A WINDOW CENTRED ON THE FAULT, not the first N characters. The
+            # first version of this logged `raw[:2000]`, which would have cut
+            # off before char 3107 — it would have printed two thousand
+            # characters not containing the problem and sent the next reader
+            # back to guessing, while looking like a fix. Centring also
+            # discloses LESS tenant-authored text than a 2000-char head slice,
+            # so the diagnostic and the privacy bound improve together rather
+            # than trading off.
+            #
+            # ⚠️ `%r` is deliberate and load-bearing. Section bodies are
+            # tenant-influenced free text; `%r` escapes newlines, so a body
+            # cannot inject a line that reads like a second log record. Under
+            # `%s` it could, and CloudWatch is exactly where `server.py`'s
+            # generic response says the real detail lives.
+            #
+            # Raising rather than returning `[]` is the last deliberate half: an
+            # empty section list is a publishable article with no content, and
+            # it would reach an operator as a success.
+            start = max(0, exc.pos - _DECODE_WINDOW)
+            window = raw[start : exc.pos + _DECODE_WINDOW]
+            logger.error(
+                "%s failed to decode at char %s (%s); payload[%s:%s]=%r",
+                field,
+                exc.pos,
+                exc.msg,
+                start,
+                start + len(window),
+                window,
+            )
+            raise RuntimeError(
+                f"the model's {field} was not valid JSON "
+                f"({exc.msg} at char {exc.pos}); the payload window is in the "
+                "runtime logs"
+            ) from exc
 
     sections: list[Section] = []
     if isinstance(parsed, list):
@@ -307,12 +446,22 @@ def parse_article(data: dict[str, Any]) -> GeneratedArticle:
                     # from the model, and that is a security boundary rather
                     # than a simplification.**
                     #
-                    # `_ARTICLE_TOOL` never declares either field, so a model
-                    # emitting one is emitting something nobody asked for.
-                    # `additionalProperties: False` does not stop it:
-                    # that constrains the two TOP-LEVEL tool arguments, and
-                    # `sections_json` is a free string this module parses
-                    # itself.
+                    # `_ARTICLE_TOOL` never declares either field, so a
+                    # model emitting one is emitting something nobody asked for.
+                    #
+                    # ⚠️ `additionalProperties: False` on the item schema does
+                    # NOT stop it, and the reason is 200 lines away so it is
+                    # restated here: the Mantle endpoint refuses `strict: true`,
+                    # so the whole schema is a HINT the model may ignore. This
+                    # drop is the only thing that actually holds.
+                    #
+                    # This comment previously argued the schema "constrains the
+                    # two TOP-LEVEL tool arguments, and `sections_json` is a
+                    # free string this module parses itself". Both clauses
+                    # stopped being true when `sections` became a typed array on
+                    # 2026-09-07 — and a reader who checks that reasoning
+                    # against the schema now sees the fields ARE declared, and
+                    # could delete this drop believing the API enforces them.
                     #
                     # Until 2026-09-04 they were copied through, and the
                     # gateway's generation write path — unlike its authoring

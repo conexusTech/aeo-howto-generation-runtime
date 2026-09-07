@@ -654,6 +654,188 @@ HTTP 200 with `EMPTY_ARTICLE`. An article with no sections cannot be published a
 
 ---
 
+### Check: gen-tool-declares-a-real-array
+
+**Requirement:** The article body is delivered as structured data, never as text the model must escape
+**Surface:** `emit_article` tool schema
+**Automated:** `tests/test_model.py::TestTheToolAsksForARealArray::test_the_tool_declares_sections_as_an_array_not_a_string`
+
+**Do**
+
+Read the tool's `input_schema` properties.
+
+**Expect**
+
+`sections` is an array of objects and `sections_json` is absent. Reverting it to a string reproduces the 2026-09-07 failure while leaving every parse test green, so this is the only assertion that notices.
+
+### Check: gen-tool-does-not-ask-for-encoded-json
+
+**Requirement:** The article body is delivered as structured data, never as text the model must escape
+**Surface:** `emit_article` tool description
+**Automated:** `tests/test_model.py::TestTheToolAsksForARealArray::test_the_tool_no_longer_asks_the_model_to_encode_json`
+
+**Do**
+
+Read the tool description and `body_md`'s description.
+
+**Expect**
+
+Neither asks for JSON-encoded text, and `body_md` states that no escaping is needed. The schema and the prose have to agree: a model obeying prose that says "encode it yourself" lands on the legacy string branch even with an array declared.
+
+### Check: gen-item-schema-pins-required-fields
+
+**Requirement:** The article body is delivered as structured data, never as text the model must escape
+**Surface:** `emit_article` item schema
+**Automated:** `tests/test_model.py::TestTheToolAsksForARealArray::test_the_item_schema_pins_the_fields_a_section_must_carry`
+
+**Do**
+
+Read `sections.items`.
+
+**Expect**
+
+`required` is `type, heading, body_md` and `additionalProperties` is false. `required` is load-bearing: a section arriving without a heading is dropped silently by the parse loop, so asking for it is what stops content vanishing with no error.
+
+### Check: gen-hostile-body-copied-through
+
+**Requirement:** The article body is delivered as structured data, never as text the model must escape
+**Surface:** `parse_article`
+**Automated:** `tests/test_model.py::TestTheToolAsksForARealArray::test_a_body_with_hostile_characters_is_copied_through_untouched`
+
+**Do**
+
+Parse an array whose `body_md` contains a double quote, a backslash and a line break.
+
+**Expect**
+
+The body is unchanged. This pins that nothing later introduces normalisation into the array path; it does not prove the escaping fix, which lives at the API boundary — see the live-endpoint note under this capability's scenario.
+
+### Check: gen-tool-enum-matches-the-contract
+
+**Requirement:** The article body is delivered as structured data, never as text the model must escape
+**Surface:** `emit_article` item schema and `contracts.SectionType`
+**Automated:** `tests/test_model.py::TestTheDeclaredTypesMatchTheContract::test_the_tool_enum_matches_the_section_type_the_contract_accepts`
+
+**Do**
+
+Compare the advertised `type` enum with the section type the contract accepts.
+
+**Expect**
+
+They are the same set. If they diverged, a type the tool advertised would fail validation inside the parse loop and lose the whole article to a generic failure — a content loss nobody could read.
+
+### Check: gen-non-list-sections-refused
+
+**Requirement:** A wrongly shaped section payload fails loudly rather than publishing an empty article
+**Surface:** `parse_article`
+**Automated:** `tests/test_model.py::TestTheOldShapeStillReadsAndFailsLoudly::test_a_non_list_sections_value_does_not_yield_a_silent_empty_article`
+
+**Do**
+
+Parse a payload whose `sections` is a single object rather than an array.
+
+**Expect**
+
+It raises, and the message says the value was not an array. The schema cannot prevent this shape because the endpoint refuses `strict: true`, so the parse side is where it has to be caught.
+
+### Check: gen-malformed-legacy-json-refused
+
+**Requirement:** A wrongly shaped section payload fails loudly rather than publishing an empty article
+**Surface:** `parse_article`
+**Automated:** `tests/test_model.py::TestTheOldShapeStillReadsAndFailsLoudly::test_malformed_legacy_json_raises_rather_than_publishing_nothing`
+
+**Do**
+
+Parse a `sections_json` string containing an unescaped quote.
+
+**Expect**
+
+It raises with the character position. Returning no sections instead would be worse than the failure: it is a publishable article with no content that reaches an operator as a success.
+
+### Check: gen-empty-array-does-not-shadow-legacy
+
+**Requirement:** A wrongly shaped section payload fails loudly rather than publishing an empty article
+**Surface:** `parse_article`
+**Automated:** `tests/test_model.py::TestTheOldShapeStillReadsAndFailsLoudly::test_an_empty_sections_array_does_not_shadow_a_valid_legacy_payload`
+
+**Do**
+
+Parse a payload carrying an empty `sections` and a valid `sections_json`.
+
+**Expect**
+
+The legacy sections are used. Selecting the field on presence rather than content let an empty array win and produced nothing at all.
+
+### Check: gen-legacy-string-still-parses
+
+**Requirement:** A wrongly shaped section payload fails loudly rather than publishing an empty article
+**Surface:** `parse_article`
+**Automated:** `tests/test_model.py::TestTheOldShapeStillReadsAndFailsLoudly::test_a_legacy_json_string_still_parses`
+
+**Do**
+
+Parse a valid `sections_json` string.
+
+**Expect**
+
+The sections are read. A request already in flight when the new shape deployed must not parse as an empty article.
+
+### Check: gen-decode-window-contains-the-fault
+
+**Requirement:** A decode failure records the text around the fault, not the start of the payload
+**Surface:** runtime logs
+**Automated:** `tests/test_model.py::TestTheDecodeLogIsActuallyDiagnostic::test_the_logged_window_contains_the_offending_character`
+
+**Do**
+
+Parse a malformed payload whose invalid character sits past 2500 characters, and read the log.
+
+**Expect**
+
+The text around the fault appears. The first version of this fix logged the first 2000 characters, which would have missed the real incident's fault at character 3107 entirely while looking like a diagnostic.
+
+### Check: gen-decode-window-is-bounded
+
+**Requirement:** A decode failure records the text around the fault, not the start of the payload
+**Surface:** runtime logs
+**Automated:** `tests/test_model.py::TestTheDecodeLogIsActuallyDiagnostic::test_the_logged_window_is_bounded_well_below_the_payload`
+
+**Do**
+
+Parse a long malformed payload and measure what was logged.
+
+**Expect**
+
+Far less than the payload. Section bodies are tenant-influenced and this lands in CloudWatch, so the bound is the privacy control and needs a test of its own.
+
+### Check: gen-decode-log-cannot-be-forged
+
+**Requirement:** A decode failure records the text around the fault, not the start of the payload
+**Surface:** runtime logs
+**Automated:** `tests/test_model.py::TestTheDecodeLogIsActuallyDiagnostic::test_a_newline_in_the_payload_cannot_forge_a_second_log_record`
+
+**Do**
+
+Parse a malformed payload whose body contains a line break followed by text shaped like a log line.
+
+**Expect**
+
+Exactly one record, with no raw line break. The `%r` conversion is what does this, and CloudWatch is precisely where the generic API response says the truthful detail lives.
+
+### Check: gen-decode-error-names-its-field
+
+**Requirement:** A decode failure records the text around the fault, not the start of the payload
+**Surface:** `parse_article`
+**Automated:** `tests/test_model.py::TestTheDecodeLogIsActuallyDiagnostic::test_the_message_names_the_field_the_value_actually_came_from`
+
+**Do**
+
+Pass a malformed string under `sections` rather than `sections_json`.
+
+**Expect**
+
+The message names `sections`. A model that hand-encodes under the new field name reaches the same branch, and naming the wrong field misdirects whoever is reading the log mid-incident.
+
 ### Check: gen-unknown-fields-ignored
 
 **Requirement:** An additive change to the gateway's context does not break generation
