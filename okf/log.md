@@ -137,3 +137,56 @@ an error.
 - **Note** — **First real evidence for HOW-4.3.** Two shops, one template, measured against each other: a fleet-focused shop in Springfield produced 7 sections on duty cycles and servicing calendars; a retail garage in Chatham produced 6 on "can this wait" and pre-purchase inspections. **Lexical similarity 0.0 at `compared_count: 1`** — distinct, not unmeasured. The criterion remains a human judgement over ten shops, so this is evidence rather than proof, but it is the strongest available and it was not obtainable before the deploy.
 
 - **Note** — **Local runs still use the stub.** `aeo-backend/.env` keeps `HOWTO_GENERATION_RUNTIME_URL`, not the ARN, so local generation stays free. The ARN wins when set — switch deliberately, because every local generation then costs a real model call.
+
+## 2026-09-09
+
+### Learning — a good AI-tell list cannot be applied wholesale by a multi-trade generator
+
+The house list flags abstract metaphor nouns: substrate, harness, scaffolding,
+ratchet, wedge, flywheel, bedrock, vector, surface, primitive, tapestry,
+landscape. **Every one of those is literal vocabulary for some business this
+runtime generates for** — a wiring harness, a hand ratchet, flooring substrate,
+an upholsterer's tapestry, a landscaper's whole trade. Automating them would
+fire on correct copy for a real customer, and a check with that false-positive
+rate teaches people to ignore it.
+
+They stay in the prompt, where the model has the trade in front of it, and out
+of the detector. `voice.NOT_AUTOMATED` records each exclusion with the word
+that forced it.
+
+⚠️ **The exclusion list itself must not reach the prompt.** An earlier draft
+interpolated its examples, which drops mechanical vocabulary into the baseline
+EVERY business shares, including a dental practice's. `test_industry_neutral.py`
+does not catch that: its word list is automotive-specific and these words are
+not on it.
+
+### Learning — a curly apostrophe hid a phrase from its own detector
+
+`PHRASE_TELLS` holds straight apostrophes, so `Let's dive in` typed with a
+curly one matched no phrase. The character rule fired and reported the
+punctuation, so the output looked like a detection — while the signposting it
+was actually there to catch went unreported. Found by probing the detector, not
+by reading it. Punctuation is folded before phrase matching now.
+
+### Learning — my own boundary test could not fail, and a mutation check said so
+
+`test_an_elevator_company_can_write_elevator` claimed to prove word-boundary
+matching. It could not: `elevator` never contained `elevate` as a substring
+(`elevat-or` vs `elevat-e`), so it passed with or without the lookarounds.
+Replacing the pattern with a bare substring match left it green.
+
+On today's list the boundaries protect nothing — every near-miss (`delved`,
+`crucially`, `myriads`) is an inflection of the tell itself and should be
+flagged. They protect the NEXT word added, so the test now exercises
+`_word_pattern` directly with `tire` inside `entire` and `car` inside `carry`.
+
+### Learning — the prompt cannot be checked against its own rules
+
+The voice section LISTS the banned characters in order to forbid them, so it
+contains all six. Any check asserting "the prompt carries no banned character"
+is unsatisfiable. The rule is enforced on generated articles only.
+
+### Update
+
+`okf/capabilities/howto-article-generation.md` — three scenarios added.
+`okf/qa/howto-article-generation.md` — twelve checks added.

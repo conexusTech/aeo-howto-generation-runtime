@@ -208,6 +208,35 @@ Related: [the pipeline](/lib/generation-pipeline.md) ·
 
 **Checked by:** gen-decode-window-contains-the-fault, gen-decode-window-is-bounded, gen-decode-log-cannot-be-forged, gen-decode-error-names-its-field
 
+#### Scenario: The copy reads as a person at the business wrote it
+
+- GIVEN the house list of characters, phrases and words that mark text as machine-written
+- WHEN an article is generated
+- THEN the prompt names every one of them, and instructs a self-review pass before the tool is called
+- AND the copy carries none of them
+- AND the same list is what the check looks for, so the instruction and the check cannot drift apart
+
+**Checked by:** gen-prompt-names-every-tell, gen-prompt-demands-self-review, gen-tells-detected-in-copy, gen-clean-copy-has-no-tells, gen-curly-punctuation-does-not-hide-a-phrase
+
+#### Scenario: A word that is a real tool, part or material in the trade is not flagged
+
+- GIVEN copy using words the house list treats as abstract metaphors
+- WHEN those words are literal vocabulary for the business's own trade
+- THEN they are not reported as tells
+- AND the exclusions are recorded with the trade word that forced each one
+- AND the prompt carries no trade's example vocabulary, so no article's context is biased toward one industry
+
+**Checked by:** gen-real-trade-vocabulary-not-flagged, gen-word-match-is-boundary-not-substring, gen-exclusions-are-recorded, gen-prompt-leaks-no-trade-vocabulary
+
+#### Scenario: Machine-written copy is reported to the reviewer and refused to nobody
+
+- GIVEN an article whose copy carries several tells
+- WHEN it is generated
+- THEN the tells are recorded in the audit, including any in the title
+- AND the generation succeeds and returns the article unchanged
+
+**Checked by:** gen-tells-recorded-in-the-audit, gen-title-tells-recorded, gen-tells-never-refuse-a-generation
+
 #### Scenario: An additive change to the gateway's context does not break generation
 
 - GIVEN a request carrying context fields and top-level keys this runtime has never seen

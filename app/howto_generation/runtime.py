@@ -22,6 +22,7 @@ import logging
 from typing import Any
 
 from app.config import Settings
+from app.howto_generation import voice
 from app.howto_generation import completeness
 from app.howto_generation import prompt as prompt_module
 from app.howto_generation import regenerate, similarity, slots
@@ -151,6 +152,15 @@ def handle(
         # from one that stamped a placeholder.
         build_version=settings.HOWTO_GENERATION_BUILD_VERSION or None,
         inputs_used=slots.inputs_used(resolution),
+        # Over the copy that is actually going out, headings included — not
+        # over the prompt. The prompt LISTS the banned characters in order to
+        # forbid them, so checking the prompt would report every one of them
+        # forever. This repo's own notes call that shape out: an acceptance
+        # criterion must not forbid its own proof.
+        voice_tells=voice.find_tells(
+            (generated.title or request.template.title)
+            + " " + similarity.body_text(sections)
+        ),
     )
 
     return GenerationResponse(

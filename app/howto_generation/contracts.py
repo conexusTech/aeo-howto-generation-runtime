@@ -187,6 +187,19 @@ class AuditRecord(BaseModel):
     #: what was ignored — occasionally the more interesting half.
     inputs_used: list[str] = Field(default_factory=list)
 
+    #: House-voice tells found in the copy this run produced, sorted. Empty is
+    #: the ordinary case and the goal.
+    #:
+    #: 🔴 MEASURED, NEVER ENFORCED, and that is the same choice this runtime
+    #: already made for similarity: a generation that reads slightly
+    #: machine-written is worth flagging to the person reviewing it and is not
+    #: worth refusing, because the alternative is refusing good articles over
+    #: a word list. An operator sees the list; nothing here acts on it.
+    #:
+    #: Additive with a default, so a gateway that has not learned about this
+    #: field stores it in `generation_audit` jsonb and ignores it.
+    voice_tells: list[str] = Field(default_factory=list)
+
 
 class TokenUsage(BaseModel):
     model_config = _OUTBOUND

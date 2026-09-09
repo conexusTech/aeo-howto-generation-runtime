@@ -836,6 +836,174 @@ Pass a malformed string under `sections` rather than `sections_json`.
 
 The message names `sections`. A model that hand-encodes under the new field name reaches the same branch, and naming the wrong field misdirects whoever is reading the log mid-incident.
 
+### Check: gen-prompt-names-every-tell
+
+**Requirement:** The copy reads as a person at the business wrote it
+**Surface:** the baseline prompt
+**Automated:** `tests/test_voice.py::TestThePromptNamesWhatWeCheck::test_every_banned_word_appears_in_the_prompt`
+
+**Do**
+
+Compare the prompt's voice section against the tell lists.
+
+**Expect**
+
+Every word and phrase the detector scans for appears in the prompt. The prompt text is GENERATED from those lists, so this holds by construction — and fails loudly if anyone hand-writes the block. The previous change in this repo shipped tool instructions whose only reader was a human, and reverting the prose left all 218 tests green.
+
+### Check: gen-prompt-demands-self-review
+
+**Requirement:** The copy reads as a person at the business wrote it
+**Surface:** the baseline prompt
+**Automated:** `tests/test_voice.py::TestThePromptNamesWhatWeCheck::test_the_baseline_carries_the_voice_section_and_the_self_review`
+
+**Do**
+
+Read the baseline.
+
+**Expect**
+
+It instructs a read-back-and-fix pass before the tool is called. The ask was for the copy to be reviewed, not merely constrained.
+
+### Check: gen-tells-detected-in-copy
+
+**Requirement:** The copy reads as a person at the business wrote it
+**Surface:** `voice.find_tells`
+**Automated:** `tests/test_voice.py::TestTheDetectorFires::test_it_finds_a_phrase`
+
+**Do**
+
+Pass prose containing a banned character, a banned phrase and a banned word.
+
+**Expect**
+
+Each is reported.
+
+### Check: gen-clean-copy-has-no-tells
+
+**Requirement:** The copy reads as a person at the business wrote it
+**Surface:** `voice.find_tells`
+**Automated:** `tests/test_voice.py::TestTheDetectorFires::test_clean_prose_produces_nothing`
+
+**Do**
+
+Pass ordinary plain copy.
+
+**Expect**
+
+An empty list. Without this control every detection check above would also pass for a function returning every tell for every input.
+
+### Check: gen-curly-punctuation-does-not-hide-a-phrase
+
+**Requirement:** The copy reads as a person at the business wrote it
+**Surface:** `voice.find_tells`
+**Automated:** `tests/test_voice.py::TestTheDetectorFires::test_a_curly_apostrophe_does_not_hide_a_phrase`
+
+**Do**
+
+Pass a signposting phrase typed with a curly apostrophe.
+
+**Expect**
+
+The same phrase tell as the straight-quoted form. The phrase list holds straight apostrophes, so before folding, only the character rule fired — it reported the punctuation and silently missed the signposting.
+
+### Check: gen-real-trade-vocabulary-not-flagged
+
+**Requirement:** A word that is a real tool, part or material in the trade is not flagged
+**Surface:** `voice.find_tells`
+**Automated:** `tests/test_voice.py::TestItDoesNotFlagRealTradeVocabulary::test_words_that_are_real_tools_parts_and_materials_pass`
+
+**Do**
+
+Pass copy using harness, ratchet, substrate, flywheel, landscape, surface and tapestry as literal trade words.
+
+**Expect**
+
+No tells. Every one of those is on the house list of abstract metaphor nouns, and every one is real vocabulary for some business this runtime generates for. A check that fires on correct customer copy is worse than no check.
+
+### Check: gen-word-match-is-boundary-not-substring
+
+**Requirement:** A word that is a real tool, part or material in the trade is not flagged
+**Surface:** `voice._word_pattern`
+**Automated:** `tests/test_voice.py::TestItDoesNotFlagRealTradeVocabulary::test_the_word_pattern_is_boundary_matched_not_substring`
+
+**Do**
+
+Build patterns for `tire` and `car` and run them against `entire`, `carry` and `character`.
+
+**Expect**
+
+No match on the innocent words, matches on the real ones. ⚠️ No word on today's list is a substring of an innocent word, so this protects the NEXT word somebody adds — and these two have already cost this repo real time. Tested against the pattern builder rather than the tell list for exactly that reason.
+
+### Check: gen-exclusions-are-recorded
+
+**Requirement:** A word that is a real tool, part or material in the trade is not flagged
+**Surface:** `voice.NOT_AUTOMATED`
+**Automated:** `tests/test_voice.py::TestItDoesNotFlagRealTradeVocabulary::test_the_exclusions_are_recorded_with_the_word_that_forced_each`
+
+**Do**
+
+Read the exclusion list.
+
+**Expect**
+
+Each entry names the rule and the trade word that forced it, so the next reader sees a decision rather than an oversight.
+
+### Check: gen-prompt-leaks-no-trade-vocabulary
+
+**Requirement:** A word that is a real tool, part or material in the trade is not flagged
+**Surface:** the baseline prompt
+**Automated:** `tests/test_voice.py::TestThePromptNamesWhatWeCheck::test_the_prompt_does_not_leak_one_trades_vocabulary`
+
+**Do**
+
+Search the baseline for the exclusion list's example words.
+
+**Expect**
+
+None present. An earlier draft interpolated them, which drops mechanical vocabulary into the baseline EVERY business shares, including a dental practice's. `tests/test_industry_neutral.py` does not catch this — its word list is automotive-specific and these words are not on it.
+
+### Check: gen-tells-recorded-in-the-audit
+
+**Requirement:** Machine-written copy is reported to the reviewer and refused to nobody
+**Surface:** `AuditRecord.voice_tells`
+**Automated:** `tests/test_voice.py::TestTheAuditRecordsTellsAndBlocksNothing::test_machine_written_copy_is_recorded`
+
+**Do**
+
+Generate with a model returning copy that carries tells.
+
+**Expect**
+
+They appear in the audit. Measured over the copy going out, never over the prompt — the prompt LISTS the banned characters in order to forbid them, so checking it would report every one of them forever.
+
+### Check: gen-title-tells-recorded
+
+**Requirement:** Machine-written copy is reported to the reviewer and refused to nobody
+**Surface:** `AuditRecord.voice_tells`
+**Automated:** `tests/test_voice.py::TestTheAuditRecordsTellsAndBlocksNothing::test_a_tell_in_the_TITLE_is_recorded_too`
+
+**Do**
+
+Generate with a tell in the title and clean body copy.
+
+**Expect**
+
+It is recorded. The title is copy a customer reads and is not part of the body text similarity works over, so reusing that text alone would have left titles unchecked.
+
+### Check: gen-tells-never-refuse-a-generation
+
+**Requirement:** Machine-written copy is reported to the reviewer and refused to nobody
+**Surface:** `POST /invocations`
+**Automated:** `tests/test_voice.py::TestTheAuditRecordsTellsAndBlocksNothing::test_tells_do_not_refuse_the_generation`
+
+**Do**
+
+Generate copy carrying several tells.
+
+**Expect**
+
+A successful response with the article intact, and the tells listed in the audit. Measured, never enforced — the same choice this runtime already made for similarity. Refusing an article over a word list throws away good work; the person reviewing the draft sees the list instead.
+
 ### Check: gen-unknown-fields-ignored
 
 **Requirement:** An additive change to the gateway's context does not break generation

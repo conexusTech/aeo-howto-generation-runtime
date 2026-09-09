@@ -33,6 +33,8 @@ that shapes good output, not the part that prevents bad output.
 
 from __future__ import annotations
 
+from app.howto_generation.voice import voice_rules_for_prompt
+
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -119,6 +121,17 @@ or leave the section out. An article missing a detail is fine. An article
 carrying a detail we invented is a false statement published on a customer's own
 domain under their name.
 """
+
+# APPENDED, not written inline, so the instruction and the CHECK come from
+# ONE source. voice.py builds this text from the same lists find_tells()
+# scans for, which makes "the prompt names what we check" true by
+# construction rather than by somebody remembering. The last change in this
+# repo shipped tool instructions whose only reader was a human, and
+# reverting the prose left all 218 tests green.
+#
+# Appended AFTER the facts rules on purpose: voice is the last pass, and the
+# refusal rules above it must not read as negotiable style advice.
+_BASELINE = _BASELINE + "\n" + voice_rules_for_prompt()
 
 
 @dataclass(frozen=True)
