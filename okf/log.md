@@ -190,3 +190,43 @@ is unsatisfiable. The rule is enforced on generated articles only.
 
 `okf/capabilities/howto-article-generation.md` — three scenarios added.
 `okf/qa/howto-article-generation.md` — twelve checks added.
+
+## 2026-09-09
+
+### Update
+
+Deployed to AgentCore: runtime `aeo_howto_generation-53Kml72pdB`, **version 7**,
+`HOWTO_GENERATION_BUILD_VERSION=19744a2@3e4a5b688417`, image digest-pinned and
+READY. The pinned digest was compared against the one the push reported, rather
+than assumed equal.
+
+QA ran first: all 77 checks in `okf/qa/howto-article-generation.md` are automated
+with a node id and none are `Manual`. Every id was proven to **resolve** with
+`--collect-only` before being run — with a deliberately fake id as the control,
+which collected nothing — and all 77 pass.
+
+### Learning
+
+**The workspace's record of what was deployed was wrong by two versions, and that
+mis-sizes a deploy rather than merely being untidy.** `CLAUDE.md` said version 4 at
+`34c48ab`; `get-agent-runtime` said version 6 at `4cea731`, updated two days
+earlier. Sized from the note, this deploy looked like 11 commits and ~3,300 lines
+across 20 files; the real delta was **2 commits** — one of them documentation only.
+Everything downstream of that number would have been wrong: the review scope, the
+risk call, the roadmap note. **Size a deploy by reading the runtime, never the
+file that describes it.** The same line also claimed "two rows are Deployed" while
+its own column said four.
+
+**`provision.py` rewrites the role policy on every run, so the `bedrock-mantle`
+grant has to be re-verified after each deploy, not once.** The documented trap is
+that a missing `bedrock-mantle:CreateInference` fails **403 at the first
+generation** — after the deploy reports success and the container starts cleanly.
+So a deploy that ends green is not evidence the grant survived. Read it back off
+the live role: `aws iam get-role-policy` showed all eight `bedrock-mantle` actions
+present alongside the four `bedrock:` ones.
+
+**This repo's `gate` runs two of its five steps.** `lint`, `typecheck` and `build`
+each print "no toolchain in this repo; not checked" and pass. So "gate green" here
+means 245 tests and `okf:check` — no static analysis of any kind ran over the 836
+new lines. That is honest (it says so out loud) but it is not what the workspace
+rule promises, and it is worth a row rather than a silent assumption.
