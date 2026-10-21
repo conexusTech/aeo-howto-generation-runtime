@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -61,6 +62,8 @@ class FakeChatModel(ChatModel):
         self.calls.append(prompt)
         if self._article is not None:
             return self._article
+        if prompt is not None and prompt.template_section_types:
+            return _mirror_template(prompt.template_section_types)
         # ⚠️ Deliberately trade-NEUTRAL placeholder text, and it reads as
         # placeholder on purpose.
         #
@@ -94,6 +97,43 @@ class FakeChatModel(ChatModel):
                 ),
             ],
         )
+
+
+_STUB_HEADINGS = {
+    "intro": "Why this matters",
+    "step": "Step {n}",
+    "tip": "Tip {n}",
+    "outro": "Next steps",
+}
+
+
+def _mirror_template(section_types: tuple[str, ...]) -> GeneratedArticle:
+    """One placeholder section per template section, same types, same order.
+
+    The completeness check refuses an article with fewer steps, tips, intros
+    or outros than its template, so a stub of fixed shape could only ever
+    satisfy a template no longer than itself. Mirroring keeps the local
+    "Generate" journey working against real templates, while the text stays
+    obviously canned.
+    """
+    seen: Counter[str] = Counter()
+    sections: list[Section] = []
+    for index, section_type in enumerate(section_types):
+        seen[section_type] += 1
+        sections.append(
+            Section(
+                type=section_type,
+                position=index + 1,
+                heading=_STUB_HEADINGS[section_type].format(n=seen[section_type]),
+                body_md=(
+                    "Placeholder text from the stub model. No language model "
+                    "was called and nothing here describes any real business."
+                ),
+            )
+        )
+    return GeneratedArticle(
+        title="Stub article (canned — no model was called)", sections=sections
+    )
 
 
 #: The four section types, in READING order — which is also the order the tool

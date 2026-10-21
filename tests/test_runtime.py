@@ -172,6 +172,22 @@ class TestCoversItsTemplate:
         )
         assert isinstance(result, GenerationResponse)
 
+    def test_the_local_stub_covers_the_template_it_is_given(self) -> None:
+        # The unscripted stub is what `HOWTO_GENERATION_USE_STUB_MODEL` serves
+        # locally. It wrote one intro and one step whatever the template asked
+        # for, so every real template came back INCOMPLETE_ARTICLE and nothing
+        # downstream of "Generate" could be exercised without Bedrock.
+        result = run(request(template=self.FULL), FakeChatModel())
+        assert isinstance(result, GenerationResponse)
+        assert [s.type for s in result.sections] == [
+            "intro",
+            "step",
+            "step",
+            "outro",
+        ]
+        assert [s.heading for s in result.sections][1:3] == ["Step 1", "Step 2"]
+        assert all("placeholder" in s.body_md.lower() for s in result.sections)
+
     def test_a_regeneration_is_not_held_to_the_template(self) -> None:
         # A regeneration merges against the current article under an edit
         # policy, so its section set is legitimately not the template's.

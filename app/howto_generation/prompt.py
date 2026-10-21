@@ -145,6 +145,12 @@ class PromptComposition:
 
     stable: str
     volatile: str
+    #: The template's section types in reading order. NOT prompt text — no
+    #: model sees it; the template's procedure reaches the model through
+    #: `volatile`. It exists so the local stub can mirror the template, since a
+    #: canned article of fixed shape fails the completeness check against any
+    #: template longer than itself.
+    template_section_types: tuple[str, ...] = ()
 
     def split(self) -> tuple[str, str]:
         return self.stable, self.volatile
@@ -381,4 +387,8 @@ def compose(
             "outside this call, so write the article you think is right and do "
             "not attempt to preserve or imitate anything."
         )
-    return PromptComposition(stable=stable, volatile="\n".join(task))
+    return PromptComposition(
+        stable=stable,
+        volatile="\n".join(task),
+        template_section_types=tuple(s.type for s in template.sections),
+    )

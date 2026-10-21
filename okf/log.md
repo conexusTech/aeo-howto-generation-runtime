@@ -1,5 +1,18 @@
 # Log
 
+## 2026-10-21
+
+### Learning — a stub of fixed shape cannot pass a check derived from the template
+
+The unscripted stub wrote one intro and one step whatever it was asked for, and
+the completeness check refuses any article with fewer sections of a type than
+its template. So every real template came back `INCOMPLETE_ARTICLE` locally,
+and nothing after "Generate" in the portal could be exercised without a paid
+Bedrock call. Found in browser verification of the portal's section editor. The
+stub now mirrors the template: one placeholder section per template section, of
+the same type and in the same order, with text that still reads as canned. The
+shape reaches it on the prompt composition, as a field no model is ever sent.
+
 ## 2026-09-07
 
 ### Learning — a tool schema that makes the MODEL do the escaping is a latent parse failure
