@@ -879,3 +879,153 @@ class TestPromptHygiene:
         questions = [{"id": "q", "text": "w" * 5000}]
         p = self.prompt(questions=questions)
         assert "w" * 301 not in p.volatile and "w" * 300 in p.volatile
+
+
+# --- claims the inputs do not make, and record/page disagreements ---------
+#
+# Found by the first real-model run (2026-10-31): drafts invented how the
+# business operates ("a same-day job, not something that sits in a general
+# queue"), and where the record's industry and the page's own sections
+# disagreed, one field told readers the business does not do what its own page
+# offers. Both are NOTES — a person reads them; neither blocks accepting.
+# They travel in `audit.voice_tells`, the one list of notes the gateway already
+# stores and shows, under their own prefixes.
+
+
+def claim_notes(result: SectionCopyResponse) -> list[str]:
+    return [n for n in result.audit.voice_tells if n.startswith("claim:")]
+
+
+def disagreement_notes(result: SectionCopyResponse) -> list[str]:
+    return [n for n in result.audit.voice_tells if n.startswith("disagreement:")]
+
+
+class TestUnsourcedClaimsAreNotes:
+    def test_an_invented_claim_is_noted_and_the_field_is_kept(self) -> None:
+        faqs = {"name": "faqs", "inputs_used": [],
+                "items": [{"question": "Is it urgent?",
+                           "answer": "Every job is guaranteed and fully insured."}]}
+        result = run(request(), drafted(GOOD[0], GOOD[1], faqs))
+        assert result.fields["faqs"] == faqs["items"]
+        assert "faqs" not in result.refused
+        assert claim_notes(result) == ["claim:guarantee (faqs)", "claim:insured (faqs)"]
+
+    def test_CONTROL_a_claim_the_record_makes_is_not_noted(self) -> None:
+        # GOOD says "the same day"; the record's product reads "Same-day".
+        result = run(request(), drafted(*GOOD))
+        assert claim_notes(result) == []
+
+    def test_a_question_is_not_a_source_for_a_claim(self) -> None:
+        # Searchers asking for a guarantee says nothing about this business.
+        questions = [{"id": "q-1", "text": "Which drain cleaner offers a guarantee"}]
+        body = {"name": "body", "text": "Every job is guaranteed.", "inputs_used": []}
+        result = run(request(questions=questions), drafted(GOOD[0], body))
+        assert claim_notes(result) == ["claim:guarantee (body)"]
+
+    def test_the_page_s_own_sections_are_a_source(self) -> None:
+        page = {"title": "Drain cleaning", "page_type": "service",
+                "other_sections_text": ["Licensed and insured since 1998."]}
+        body = {"name": "body", "text": "A licensed, insured team.", "inputs_used": []}
+        result = run(request(page=page), drafted(GOOD[0], body))
+        assert claim_notes(result) == []
+
+    def test_a_person_s_edit_is_a_source_and_is_never_itself_noted(self) -> None:
+        baseline = {"headline": "H", "body": "B"}
+        current = {"headline": "H", "body": "We are licensed and bonded."}
+        headline = {"name": "headline", "text": "Licensed drain cleaning",
+                    "inputs_used": []}
+        result = run(request(current_fields=current, generated_baseline=baseline),
+                     drafted(headline, GOOD[2]))
+        assert result.fields["body"] == current["body"]
+        assert claim_notes(result) == []
+
+    def test_a_refused_field_adds_no_claim_note(self) -> None:
+        body = {"name": "body", "text": "Guaranteed. Call 555-000-1111.", "inputs_used": []}
+        result = run(request(), drafted(GOOD[0], body))
+        assert "body" in result.refused
+        assert claim_notes(result) == []
+
+
+class TestDisagreementsAreNotes:
+    def test_a_disagreement_the_model_reports_is_noted_and_nothing_is_refused(self) -> None:
+        model = FakeChatModel(section_copy=DraftedSectionCopy(
+            fields=list(GOOD),
+            disagreements=["The record says technology; the page offers plumbing."],
+        ))
+        result = run(request(), model)
+        assert disagreement_notes(result) == [
+            "disagreement:The record says technology; the page offers plumbing."
+        ]
+        assert result.refused == {}
+        assert set(result.fields) == {"headline", "body", "faqs"}
+
+    def test_CONTROL_no_disagreement_no_note(self) -> None:
+        assert disagreement_notes(run(request(), drafted(*GOOD))) == []
+
+    def test_a_disagreement_is_one_line_bounded_and_deduplicated(self) -> None:
+        long = "x" * 1000
+        model = FakeChatModel(section_copy=DraftedSectionCopy(
+            fields=list(GOOD),
+            disagreements=["a\nb", "a b", "  ", long, "c", "d", "e"],
+        ))
+        notes = disagreement_notes(run(request(), model))
+        assert notes[0] == "disagreement:a b"
+        assert len(notes) == section_copy.MAX_DISAGREEMENTS
+        assert all("\n" not in n for n in notes)
+        assert all(len(n) <= len("disagreement:") + section_copy.MAX_DISAGREEMENT_CHARS
+                   for n in notes)
+
+    def test_the_bedrock_path_reads_disagreements_and_drops_non_strings(self) -> None:
+        bedrock, _ = _bedrock_with({"fields": list(GOOD),
+                                    "disagreements": ["record vs page", 7, None]})
+        result = run(request(), bedrock)
+        assert disagreement_notes(result) == ["disagreement:record vs page"]
+
+    def test_the_bedrock_path_survives_a_non_list(self) -> None:
+        bedrock, _ = _bedrock_with({"fields": list(GOOD), "disagreements": "oops"})
+        assert disagreement_notes(run(request(), bedrock)) == []
+
+    def test_the_tool_declares_disagreements_as_optional(self) -> None:
+        schema = model_module._SECTION_COPY_TOOL["input_schema"]
+        assert schema["properties"]["disagreements"]["type"] == "array"
+        assert "disagreements" not in schema["required"]
+
+    def test_the_stub_reports_none(self) -> None:
+        assert disagreement_notes(run(request(), FakeChatModel())) == []
+
+
+class TestTheClaimRulesInThePrompt:
+    def stable(self) -> str:
+        model = FakeChatModel()
+        run(request(), model)
+        return model.section_calls[0].stable
+
+    def test_claims_about_how_the_business_works_need_an_input(self) -> None:
+        stable = self.stable()
+        assert "CLAIMS ABOUT HOW THE BUSINESS WORKS: ONLY WHAT AN INPUT SAYS." in stable
+        assert "the QUESTIONS are what searchers ask" in stable
+        assert "write around it" in stable
+        assert "Never tell a reader the business does NOT do something" in stable
+
+    def test_it_shows_what_is_not_allowed_and_what_to_write_instead(self) -> None:
+        stable = self.stable()
+        assert 'Not allowed, unless an input says so: "Urgent requests skip the queue' in stable
+        assert 'Write instead: "Tell us what happened and how urgent it is' in stable
+
+    def test_a_disagreement_is_asserted_neither_way_and_reported(self) -> None:
+        stable = self.stable()
+        assert "WHEN THE BUSINESS AND THE PAGE DISAGREE." in stable
+        assert "assert NEITHER version" in stable
+        assert "`disagreements`" in stable
+
+    def test_the_existing_rules_are_intact(self) -> None:
+        stable = self.stable()
+        for kept in ("FACTS: USE ONLY WHAT YOU ARE GIVEN.", "COMPETITORS.",
+                     "WHAT THE SECTION IS FOR.", "Do not invent,"):
+            assert kept in stable
+
+    def test_the_new_rules_name_no_trade(self) -> None:
+        from app.howto_generation import section_prompt
+        baseline = section_prompt._BASELINE.lower()
+        for trade_word in ("plumb", "pipe", "drain", "dental", "legal", "vehicle"):
+            assert trade_word not in baseline, trade_word

@@ -53,6 +53,10 @@ class DraftedSectionCopy(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     fields: list[dict[str, Any]] = Field(default_factory=list)
+    #: Points on which the model found the record and the page disagree about
+    #: what the business does or offers, one short line each. Untrusted text:
+    #: `section_copy` bounds it and returns it only as a note.
+    disagreements: list[str] = Field(default_factory=list)
     usage: TokenUsage | None = None
 
 
@@ -357,6 +361,15 @@ _SECTION_COPY_TOOL: dict[str, Any] = {
                     "additionalProperties": False,
                 },
             },
+            "disagreements": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Only where THE BUSINESS and THE PAGE disagree about what "
+                    "the business does or offers: one short line per disputed "
+                    "point. Omit or leave empty otherwise."
+                ),
+            },
         },
         "required": ["fields"],
         "additionalProperties": False,
@@ -410,7 +423,13 @@ class BedrockChatModel(ChatModel):
         # article, an empty section draft is not a silent success — every
         # field then comes back in `refused` as not drafted.
         fields = [f for f in raw if isinstance(f, dict)] if isinstance(raw, list) else []
-        return DraftedSectionCopy(fields=fields, usage=usage)
+        raw_disagreements = data.get("disagreements")
+        disagreements = (
+            [d for d in raw_disagreements if isinstance(d, str)]
+            if isinstance(raw_disagreements, list)
+            else []
+        )
+        return DraftedSectionCopy(fields=fields, disagreements=disagreements, usage=usage)
 
     def _stream_tool_call(
         self,

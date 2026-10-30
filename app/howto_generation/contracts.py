@@ -443,8 +443,13 @@ class SectionCopyAudit(BaseModel):
     model_id: str
     build_version: str | None = None
     inputs_used: list[str] = Field(default_factory=list)
-    #: Over the copy THIS run drafted (not a person's preserved words).
-    #: Measured, never enforced — see `AuditRecord.voice_tells`.
+    #: The draft's notes for a person, over the copy THIS run drafted (not a
+    #: person's preserved words). Measured, never enforced. Voice tells as for
+    #: articles (`character:`, `phrase:`, `word:` — see
+    #: `AuditRecord.voice_tells`), then `claim:<family> (<field>)` for a promise
+    #: word no business input uses, then `disagreement:<line>` for each point
+    #: the model found the record and the page disagree on. One list because it
+    #: is the one the gateway already stores and shows.
     voice_tells: list[str] = Field(default_factory=list)
 
 

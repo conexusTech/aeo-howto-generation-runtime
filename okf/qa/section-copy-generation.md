@@ -147,6 +147,38 @@ Draft a body with "Let's dive in" and a dash; preserve a person's body with the 
 
 ---
 
+### Check: scg-claims-noted
+
+**Requirement:** A claim about how the business works that no business input makes is noted for the person, and the field is kept
+**Surface:** Section checks, pipeline notes and prompt composition
+**Automated:** `tests/test_section_checks.py::TestUnsourcedClaims`, `tests/test_section_copy.py::TestUnsourcedClaimsAreNotes`, `tests/test_section_copy.py::TestTheClaimRulesInThePrompt::test_claims_about_how_the_business_works_need_an_input`, `tests/test_section_copy.py::TestTheClaimRulesInThePrompt::test_it_shows_what_is_not_allowed_and_what_to_write_instead`, `tests/test_section_copy.py::TestTheClaimRulesInThePrompt::test_the_existing_rules_are_intact`, `tests/test_section_copy.py::TestTheClaimRulesInThePrompt::test_the_new_rules_name_no_trade`
+
+**Do**
+
+Draft a `faqs` answer reading "Every job is guaranteed and fully insured." against a record and page that say neither; ask a question naming a guarantee and draft "Every job is guaranteed."; put "Licensed and insured since 1998." in the page's other sections, and "We are licensed and bonded." in a person's edited field; draft a field that is refused for a phone number and also says "Guaranteed"; run each claim family alone with no inputs, and "Uninsured damage" and "same day-to-day work" as controls. Read the composed prompt.
+
+**Expect**
+
+`faqs` is kept, `refused` is empty for it, and the notes are exactly `claim:guarantee (faqs)` and `claim:insured (faqs)`; the question does not source `guarantee` (the note is there); the page's sections and the person's edit source theirs (no note); the refused field adds none; every family fires alone and is silent when the same family, spelt differently, is in an input; the controls do not fire; `refusal_reason` returns nothing for a claim. The prompt carries the CLAIMS heading, the not-allowed and write-instead examples, the rule that questions are not facts and the rule against saying the business does not do something; the earlier rules are still present and the baseline names no trade. A claim that refuses its field, or a question that sources a claim, fails the check.
+
+---
+
+### Check: scg-disagreements-noted
+
+**Requirement:** Where the record and the page disagree about what the business does, the draft notes it and is not stopped
+**Surface:** Model tool, pipeline notes and prompt composition
+**Automated:** `tests/test_section_copy.py::TestDisagreementsAreNotes`, `tests/test_section_copy.py::TestTheClaimRulesInThePrompt::test_a_disagreement_is_asserted_neither_way_and_reported`
+
+**Do**
+
+Have the model report "The record says technology; the page offers plumbing."; then `"a\nb"`, `"a b"`, a blank, a 1000-character line and three more; through the Bedrock path send `["record vs page", 7, null]`, then the string `"oops"`; draft with no disagreement and with the stub. Read the tool schema and the composed prompt.
+
+**Expect**
+
+The first gives exactly one `disagreement:` note with the line, all three fields and an empty `refused`; the second gives `disagreement:a b` first, three notes, no newline, none over 150 characters after the prefix; Bedrock keeps only `record vs page` and survives the string; no disagreement and the stub give no note; the tool declares `disagreements` as an array and does not require it; the prompt carries the DISAGREE heading, "assert NEITHER version" and names `disagreements`. A disagreement that refuses a field, or an unbounded line, fails the check.
+
+---
+
 ### Check: scg-audit
 
 **Requirement:** The audit records what the draft was written from

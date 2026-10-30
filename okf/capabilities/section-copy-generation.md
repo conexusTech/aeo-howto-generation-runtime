@@ -15,9 +15,11 @@ the portal shows it; a person decides. The gateway's half (spend, assignment, re
 
 **Seeded 2026-10-30** by `section-copy-generation` (Meriwether Sites C4, T-1) with its review fixes. Every
 scenario below is executed by the suite in `tests/`, against the real modules, with a fake model injected.
-**No scenario here has run against a real model**: the post-checks have been shown on constructed answers,
-not on real prose, and quality of the copy is not a scenario because it cannot fail. Real-model checks wait
-for the lead's approval of the spend.
+The suite runs every scenario against a fake model: the post-checks are shown on constructed answers, and
+quality of the copy is not a scenario because it cannot fail. **The first real-model run (2026-10-31)** found
+copy that was well written, price-free and kept a person's edits, but invented how the business operates and,
+where the record and the page disagreed, told readers the business does not do what its own page offers. The
+two scenarios on claims and disagreements are the answer to that run.
 
 Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-resolution.md) ·
 [regeneration](/lib/regeneration.md) · [emit-only](/business/emit-only.md) ·
@@ -71,6 +73,26 @@ Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-res
 - AND the sources are collected from the composed prompt itself, so what the prompt cuts is not a source: products past the twentieth, questions past the twelfth, questions longer than 300 characters
 
 **Checked by:** scg-sources-are-the-prompt
+
+#### Scenario: A claim about how the business works that no business input makes is noted for the person, and the field is kept
+
+- GIVEN a record and a page that say nothing about guarantees or insurance, and a question that asks for a guarantee
+- WHEN the model writes "guaranteed" and "insured" into a list item
+- THEN the field is kept, nothing is refused, and the draft's notes carry `claim:guarantee (faqs)` and `claim:insured (faqs)`
+- AND the same word in the record, in the page's other sections or in a field a person edited is not noted, a question naming it does not source it, a person's preserved words and a refused field add no note, and a word that only contains a term, such as uninsured, is not one
+- AND the prompt tells the model to state how the business works only where an input says so, shows a sentence it may not write and one to write instead, and forbids saying the business does not do something unless an input says so
+
+**Checked by:** scg-claims-noted
+
+#### Scenario: Where the record and the page disagree about what the business does, the draft notes it and is not stopped
+
+- GIVEN a model that reports the record and the page disagree about what the business does
+- WHEN the draft is returned
+- THEN the draft's notes carry `disagreement:` and the model's line, every field is kept and nothing is refused
+- AND the line is made one line of at most 150 characters, at most three are kept, repeats are dropped, anything that is not a string is dropped, and with no disagreement there is no note
+- AND the prompt tells the model to assert neither version of the disputed point and to report each one
+
+**Checked by:** scg-disagreements-noted
 
 #### Scenario: A person's edited field is kept by name, word for word
 

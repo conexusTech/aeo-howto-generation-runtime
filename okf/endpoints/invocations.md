@@ -75,4 +75,7 @@ Response: `task`, `fields`, `field_notes` (`inputs_used` per field), `refused`
 `similarity` (`score`, `nearest_draft_id`, `nearest_organization_id`,
 `compared_count`, `duration_ms`), `audit` (`template_key`, `template_name`,
 `question_ids`, `context_version`, `organization_id`, `model_id`,
-`build_version`, `inputs_used`, `voice_tells`) and `usage`.
+`build_version`, `inputs_used`, `voice_tells`) and `usage`. `voice_tells` is the
+draft's list of notes: voice tells, then `claim:<family> (<field>)` and
+`disagreement:<line>` (see [section copy](/lib/section-copy.md)). Notes never
+remove a field.

@@ -20,7 +20,11 @@ TR-3                                          allowlist       TR-1, TR-2      TR
    the WHOLE field and records why (`section_checks.py`). The prompt asks; this
    enforces. The inputs are what the prompt showed plus the person's edits.
 6. **Merge** the person's fields back in, word for word.
-7. **Measure** voice tells and similarity. Recorded, never enforced.
+7. **Measure** voice tells and similarity, and **note** a claim term no
+   business input uses (`claim:`) and each point the model found the record
+   and the page disagree on (`disagreement:`). Recorded, never enforced. The
+   notes ride in `audit.voice_tells`, the one list of notes the gateway
+   already stores and shows.
 
 Emit-only, as for articles: the gateway stores the draft, prices the usage and
 writes the section when a person accepts it.
@@ -49,6 +53,12 @@ from app.howto_generation.runtime import _context_version, _organization_id
 from app.howto_generation import slots as slots_module
 
 _NOT_DRAFTED = "the model did not draft this field"
+
+#: Bounds on the model's own disagreement lines, which are untrusted text that
+#: reaches a person's screen. The gateway cuts a note at 200 characters.
+MAX_DISAGREEMENTS = 3
+MAX_DISAGREEMENT_CHARS = 150
+_MAX_NOTE_FIELD_CHARS = 60
 
 
 class SectionCopyRefused(Exception):
@@ -264,6 +274,40 @@ def copy_text(fields: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
+def claim_notes(fields: dict[str, Any], *, sources: Iterable[str]) -> list[str]:
+    """`claim:<family> (<field>)` for each claim family a drafted field uses
+    that no business input does. A note for a person, never a refusal.
+
+    `sources` is what the prompt showed about the business
+    (`SectionCopyPrompt.claim_source_texts`) plus the person's edited fields;
+    the questions are not in it.
+    """
+    sourced = section_checks.sourced_claims(sources)
+    notes: list[str] = []
+    for name, value in fields.items():
+        families: set[str] = set()
+        for text in _strings(value):
+            families.update(section_checks.unsourced_claims(text, sourced))
+        label = " ".join(name.split())[:_MAX_NOTE_FIELD_CHARS]
+        notes.extend(f"claim:{family} ({label})" for family in sorted(families))
+    return notes
+
+
+def disagreement_notes(disagreements: Iterable[str]) -> list[str]:
+    """`disagreement:<line>` per point the model reported, one line each,
+    bounded, deduplicated, in the model's order."""
+    lines: list[str] = []
+    for raw in disagreements:
+        if not isinstance(raw, str):
+            continue
+        line = " ".join(raw.split())[:MAX_DISAGREEMENT_CHARS].rstrip()
+        if line and line not in lines:
+            lines.append(line)
+        if len(lines) == MAX_DISAGREEMENTS:
+            break
+    return [f"disagreement:{line}" for line in lines]
+
+
 def _inputs_used(request: SectionCopyRequest, facts_provenance: list[str]) -> list[str]:
     paths = set(facts_provenance)
     organization = request.context.get("organization")
@@ -313,6 +357,12 @@ def handle(
         refused[name] = reason
 
     drafted_text = copy_text(fields)
+    # Over the fields THIS run drafted and kept, before a person's preserved
+    # words are merged back: those are theirs, and a source rather than a claim.
+    notes_on_claims = claim_notes(
+        fields,
+        sources=[*composition.claim_source_texts, *edited_texts(request, edited)],
+    )
 
     # `discard`: a person's field this draft actually replaces, named so the
     # overwrite is never silent. One the post-checks removed is not replaced.
@@ -356,8 +406,15 @@ def handle(
         inputs_used=_inputs_used(request, slots_module.inputs_used(facts)),
         # Over what THIS run drafted and kept — not a person's preserved words,
         # which are not ours to flag, and not the prompt, which names every
-        # banned character in order to forbid it.
-        voice_tells=voice.find_tells(drafted_text),
+        # banned character in order to forbid it. The claim and disagreement
+        # notes ride here too, under their own prefixes: this is the list of
+        # notes the gateway already stores and shows, and a field it does not
+        # know would be dropped there.
+        voice_tells=[
+            *voice.find_tells(drafted_text),
+            *notes_on_claims,
+            *disagreement_notes(drafted.disagreements),
+        ],
     )
 
     return SectionCopyResponse(

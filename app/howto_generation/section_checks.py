@@ -1,4 +1,7 @@
-"""Post-checks on drafted section copy — TR-1 (prices) and TR-2 (unsourced numbers).
+"""Post-checks on drafted section copy — TR-1 (prices) and TR-2 (unsourced numbers),
+plus one that only NOTES: a claim about how the business works (same day,
+guaranteed, licensed, insured...) that no business input makes. See the end of
+this module.
 
 The prompt ASKS the model to use only the facts it is given. This module is what
 holds when the model does not comply: it reads every drafted field after the
@@ -629,3 +632,60 @@ def refusal_reason(
             "compares with one"
         )
     return None
+
+
+# --- claims about how the business works: a NOTE, never a refusal ------------
+#
+# Found by the first real-model run (2026-10-31): drafts were well written and
+# number-clean, and still told readers how the business operates — "a same-day
+# job, not something that sits in a general queue" — when nothing the model was
+# shown said so. Most such sentences have no fixed vocabulary, so the PROMPT is
+# what addresses them. A few terms do: each below is a promise a reader acts on,
+# and none is ordinary filler copy, so a draft using one that no input uses is
+# worth a person's look. It is reported, never refused: unlike an invented phone
+# number, "guaranteed" can be true of the business and simply missing from the
+# record, and a person reviewing the draft is who knows.
+#
+# Clock times, `24/7` and `24 hours` are NOT here: the hours detector above
+# already refuses them when unsourced. `around the clock` is here because it
+# says the same thing with no digit for that detector to see.
+#
+# Matched by FAMILY, so `guaranteed` in a draft is sourced by `guarantee` in the
+# record; whole words only, so `uninsured` is not `insured`.
+
+CLAIM_FAMILIES: tuple[tuple[str, str], ...] = (
+    ("accredited", r"accredited"),
+    ("around the clock", r"a?round[\s-]the[\s-]clock"),
+    ("bonded", r"bonded"),
+    ("certified", r"certified"),
+    ("guarantee", r"guarantee(?:s|d|ing)?"),
+    ("insured", r"insured"),
+    ("licensed", r"licen[cs]ed"),
+    ("next day", r"next[\s-]day"),
+    # `same day-to-day work` is not a timing claim.
+    ("same day", r"same[\s-]day(?![\s-]to[\s-]day)"),
+    ("warranty", r"warrant(?:y|ies|ied)"),
+)
+
+_CLAIM_PATTERNS = tuple(
+    (label, re.compile(rf"(?<!\w)(?:{pattern})(?!\w)", re.IGNORECASE))
+    for label, pattern in CLAIM_FAMILIES
+)
+
+
+def claim_families(text: str) -> list[str]:
+    """Every claim family `text` uses, in `CLAIM_FAMILIES` order, once each."""
+    if not text:
+        return []
+    folded = normalise(text)
+    return [label for label, pattern in _CLAIM_PATTERNS if pattern.search(folded)]
+
+
+def sourced_claims(inputs: Iterable[str]) -> frozenset[str]:
+    """The claim families any input uses."""
+    return frozenset(label for text in inputs for label in claim_families(text))
+
+
+def unsourced_claims(text: str, sourced: frozenset[str]) -> list[str]:
+    """The claim families `text` uses that no input does."""
+    return [label for label in claim_families(text) if label not in sourced]

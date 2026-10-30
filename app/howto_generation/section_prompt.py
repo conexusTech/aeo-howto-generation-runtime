@@ -94,6 +94,42 @@ This is checked after you answer. A field carrying a phone number, a licence
 number, an address, opening hours or a price that we did not give you is
 thrown away whole, so an invented detail costs the entire field.
 
+CLAIMS ABOUT HOW THE BUSINESS WORKS: ONLY WHAT AN INPUT SAYS.
+This goes further than the facts above. Any sentence about what the business
+does or does not do, how it works, its process, how it decides what comes
+first, how fast it responds, what it promises or guarantees, where it works,
+what it is licensed, certified or insured for, or when it is available is a
+claim about the business. Write a claim only if THE BUSINESS, the RESOLVED
+FACTS, THE PAGE or the price list says it. Those are the inputs, and
+the QUESTIONS are what searchers ask, not facts about this business: a
+question asking for something fast does not make this business fast. If no
+input says it, write around it: say what is generally true of the work, or
+what the reader should do next, and leave the business's own process unstated.
+
+Not allowed, unless an input says so: "Urgent requests skip the queue and are
+handled the same day." "Every job is guaranteed." "We are fully licensed and
+insured."
+Write instead: "Tell us what happened and how urgent it is, and we will tell
+you what happens next." "Ask us what is covered before the work starts."
+
+Never tell a reader the business does NOT do something unless an input says
+so.
+
+A draft that uses a promise word no input uses (same day, guaranteed,
+licensed, certified, insured, around the clock and the like) is flagged to the
+person who reviews it.
+
+WHEN THE BUSINESS AND THE PAGE DISAGREE.
+THE BUSINESS (the record) and THE PAGE (its title and its other sections) can
+disagree about what the business does or offers: the record names one line of
+work and the page describes another, or the page offers something the record
+never mentions. On the disputed point, assert NEITHER version: do not say the
+business offers it and do not say it does not. Write the rest of the copy from
+what the two agree on. Then name each disputed point in one short line in
+`disagreements` in the tool call, for example "the record's industry and the
+page's sections describe different work". A person reviews it; it does not
+stop the draft.
+
 COMPETITORS.
 The questions may name competitors and the sites answer engines cite today.
 They tell you what this section is up against. Never name a competitor in the
@@ -128,6 +164,11 @@ class SectionCopyPrompt:
     #: sourced from. Collected where the prompt is composed, so what the model
     #: saw and what sources a number cannot drift apart.
     source_texts: tuple[str, ...] = ()
+    #: The subset of `source_texts` that describes THE BUSINESS — everything
+    #: but the questions, the competitors they name and the cited hosts — from
+    #: which a claim about how the business works may be sourced. A searcher
+    #: asking for a guarantee says nothing about whether this business gives one.
+    claim_source_texts: tuple[str, ...] = ()
 
     def split(self) -> tuple[str, str]:
         return self.stable, self.volatile
@@ -203,12 +244,15 @@ def compose(
     # here as it is written into the prompt — never rebuilt from the request
     # afterwards — so a cap or a slice changed here changes the sources too.
     sources: list[str] = [line for line in org_block.splitlines() if line.strip()]
+    claim_sources: list[str] = list(sources)
 
-    def shown(value: Any, limit: int | None = None) -> str:
+    def shown(value: Any, limit: int | None = None, *, about_business: bool = True) -> str:
         text = _one_line(value)
         if limit is not None:
             text = text[:limit]
         sources.append(text)
+        if about_business:
+            claim_sources.append(text)
         return text
 
     # --- the page and the questions, fenced: tenant and third-party text ----
@@ -237,17 +281,20 @@ def compose(
         for question in questions:
             qid = f"question:{_one_line(question.id)}"
             input_ids.add(qid)
-            text = shown(question.text, MAX_QUESTION_CHARS)
+            text = shown(question.text, MAX_QUESTION_CHARS, about_business=False)
             question_pairs.append((question.id, text))
             data.append(f"- [{qid}] {text}")
             data.append(f"    - Today: {_VERDICTS[question.verdict]}")
             if question.competitors:
-                named = ", ".join(shown(c) for c in question.competitors[:MAX_COMPETITORS])
+                named = ", ".join(
+                    shown(c, about_business=False)
+                    for c in question.competitors[:MAX_COMPETITORS]
+                )
                 data.append(f"    - Competitors answer engines name: {named}")
             if question.top_cited_host:
                 data.append(
                     f"    - The source answer engines cite most: "
-                    f"{shown(question.top_cited_host)}"
+                    f"{shown(question.top_cited_host, about_business=False)}"
                 )
     else:
         data.append("- (none given: write for the page's title)")
@@ -265,7 +312,9 @@ def compose(
             data.append("- (empty: write no amount at all)")
 
     facts_block = _facts_block(facts)
-    sources.extend(line for line in facts_block.splitlines() if line.strip())
+    fact_lines = [line for line in facts_block.splitlines() if line.strip()]
+    sources.extend(fact_lines)
+    claim_sources.extend(fact_lines)
 
     task: list[str] = [
         "\n".join(_fence(data)),
@@ -311,4 +360,5 @@ def compose(
         page_title=request.page.title,
         input_ids=frozenset(input_ids),
         source_texts=tuple(sources),
+        claim_source_texts=tuple(claim_sources),
     )

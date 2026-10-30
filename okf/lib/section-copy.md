@@ -81,6 +81,46 @@ The prompt caps what it carries, like the other caps (sections 12, competitors
 10, prices 50): at most 12 questions of 300 characters each. What is cut is not
 shown and so is not a source.
 
+## Notes, never refusals: claims and disagreements
+
+The first real-model run (2026-10-31) found what the number checks cannot see:
+drafts stating how the business operates ("a same-day job, not something that
+sits in a general queue") when nothing the model was shown said so, and, where
+the record's industry and the page's own sections described different work, a
+field telling readers the business does not do what its own page offers.
+
+The **prompt** carries most of the answer, because a sentence about a process
+has no fixed vocabulary: a claim about what the business does, how it works,
+how fast, what it guarantees, where, what it is licensed, certified or insured
+for, or when it is available may be written only from THE BUSINESS, the
+resolved facts, THE PAGE or the price list; the questions are not facts about
+the business; otherwise write around it; never say the business does not do
+something unless an input says so. Where the record and the page disagree about
+what the business does, the draft asserts neither version of that point and the
+model names it in the tool's optional `disagreements`.
+
+Two notes follow in code, and neither removes anything:
+
+- `claim:<family> (<field>)` for a promise word a drafted field uses that no
+  business input does: `same day`, `next day`, `around the clock`, `guarantee`,
+  `warranty`, `licensed`, `certified`, `insured`, `bonded`, `accredited`.
+  Matched by family and whole word (`guaranteed` is sourced by `guarantee`;
+  `uninsured` is not `insured`). The sources are what the prompt showed **about
+  the business** (`SectionCopyPrompt.claim_source_texts`: everything but the
+  questions, their competitors and cited hosts) plus the person's edited fields.
+  Clock times, `24/7` and `24 hours` are not here: the hours check already
+  refuses them. It is a note rather than a refusal because, unlike an invented
+  phone number, "guaranteed" may be true and merely missing from the record.
+- `disagreement:<line>` per point the model reported, one line, at most 150
+  characters, at most three, deduplicated.
+
+Both travel in `audit.voice_tells` after the voice tells, under their prefixes:
+it is the one list of notes the gateway stores and shows, and an unknown key in
+`field_notes` or `audit` is dropped there. ⚠️ The portal currently introduces
+that list as phrasing that can read as machine-written, which fits a claim
+note loosely and a disagreement note poorly; giving them their own line is the
+gateway's and the portal's to do.
+
 ## A person's field is kept by name
 
 A field whose current value differs from the generated baseline is a person's
@@ -114,7 +154,8 @@ pipeline without tripping a check the inputs did not already pass.
 ## The model call
 
 The section tool is generic (`fields` as an array of `{name, text | items,
-inputs_used}`) rather than built per template, so its definition is byte-stable
+inputs_used}`, plus an optional `disagreements` array of strings) rather than
+built per template, so its definition is byte-stable
 and stays in the cached prefix. The streaming, the unforced first call and the
 one forced retry are the same code as the article's, shared through one helper
 in [the model seam](/lib/model-seam.md).

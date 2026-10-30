@@ -326,3 +326,79 @@ class TestHoursAreKeyedAcrossClocks:
     )
     def test_a_different_time_is_not(self, draft: str, source: str) -> None:
         assert reason(draft, inputs=[source]) is not None
+
+
+# --- claims about how the business works: a NOTE, never a refusal -----------
+
+
+class TestUnsourcedClaims:
+    """A claim term the inputs do not hold is reported, by family.
+
+    Proven both ways, like the number checks: every family FIRES with no
+    inputs, and the same family in a different spelling in the inputs does
+    NOT fire.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "family"),
+        [
+            ("We treat it as a same-day job.", "same day"),
+            ("Same day, every time.", "same day"),
+            ("Most jobs are done next day.", "next day"),
+            ("We answer around the clock.", "around the clock"),
+            ("Every job is guaranteed.", "guarantee"),
+            ("Our guarantee covers it.", "guarantee"),
+            ("Parts carry a warranty.", "warranty"),
+            ("We are fully licensed.", "licensed"),
+            ("A licenced team.", "licensed"),
+            ("Certified staff only.", "certified"),
+            ("We are insured.", "insured"),
+            ("Bonded and careful.", "bonded"),
+            ("An accredited firm.", "accredited"),
+        ],
+    )
+    def test_it_fires_on_a_claim_no_input_holds(self, text: str, family: str) -> None:
+        assert checks.unsourced_claims(text, checks.sourced_claims([])) == [family]
+
+    @pytest.mark.parametrize(
+        ("text", "source"),
+        [
+            ("We treat it as a same day job.", "Drain cleaning — Same-day"),
+            ("We are licensed.", "Fully LICENSED and insured"),
+            ("Every job is guaranteed.", "Our workmanship guarantee"),
+            ("We are insured.", "Licensed and insured"),
+        ],
+    )
+    def test_CONTROL_the_same_family_in_the_inputs_sources_it(
+        self, text: str, source: str
+    ) -> None:
+        assert checks.unsourced_claims(text, checks.sourced_claims([source])) == []
+
+    def test_a_different_family_in_the_inputs_does_not_source_it(self) -> None:
+        sourced = checks.sourced_claims(["Fully licensed."])
+        assert checks.unsourced_claims("Licensed and insured.", sourced) == ["insured"]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Uninsured damage is the owner's to report.",
+            "We do the same day-to-day work as anyone.",
+            "Tell us what happened and we will say what comes next.",
+            "",
+        ],
+    )
+    def test_CONTROL_plain_copy_and_words_that_only_contain_a_term_do_not_fire(
+        self, text: str
+    ) -> None:
+        assert checks.unsourced_claims(text, checks.sourced_claims([])) == []
+
+    def test_each_family_is_reported_once_in_a_stable_order(self) -> None:
+        text = "Guaranteed. Insured. Our guarantee is same-day and same day."
+        assert checks.unsourced_claims(text, checks.sourced_claims([])) == [
+            "guarantee",
+            "insured",
+            "same day",
+        ]
+
+    def test_a_claim_is_never_a_refusal(self) -> None:
+        assert reason("Every job is guaranteed, same day.") is None
