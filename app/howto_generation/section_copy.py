@@ -293,6 +293,18 @@ def claim_notes(fields: dict[str, Any], *, sources: Iterable[str]) -> list[str]:
     return notes
 
 
+def _bounded(line: str) -> str:
+    """A line at most MAX_DISAGREEMENT_CHARS long, cut at a word and marked
+    with an ellipsis, so a long point never ends mid-thought."""
+    if len(line) <= MAX_DISAGREEMENT_CHARS:
+        return line
+    cut = line[: MAX_DISAGREEMENT_CHARS - 1]
+    space = cut.rfind(" ")
+    if space > MAX_DISAGREEMENT_CHARS // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.") + "…"
+
+
 def disagreement_notes(disagreements: Iterable[str]) -> list[str]:
     """`disagreement:<line>` per point the model reported, one line each,
     bounded, deduplicated, in the model's order."""
@@ -300,7 +312,7 @@ def disagreement_notes(disagreements: Iterable[str]) -> list[str]:
     for raw in disagreements:
         if not isinstance(raw, str):
             continue
-        line = " ".join(raw.split())[:MAX_DISAGREEMENT_CHARS].rstrip()
+        line = _bounded(" ".join(raw.split()))
         if line and line not in lines:
             lines.append(line)
         if len(lines) == MAX_DISAGREEMENTS:

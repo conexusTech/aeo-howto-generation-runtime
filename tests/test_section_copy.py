@@ -975,6 +975,17 @@ class TestDisagreementsAreNotes:
         assert all(len(n) <= len("disagreement:") + section_copy.MAX_DISAGREEMENT_CHARS
                    for n in notes)
 
+    def test_a_long_disagreement_is_cut_at_a_word_and_marked(self) -> None:
+        point = ("The business record lists the industry as Technology, but the page is titled "
+                 "Same-day repair and the target questions ask about plumbing work such as burst pipes")
+        model = FakeChatModel(section_copy=DraftedSectionCopy(fields=list(GOOD), disagreements=[point]))
+        [note] = disagreement_notes(run(request(), model))
+        line = note.removeprefix("disagreement:")
+        assert line.endswith("…")
+        assert len(line) <= section_copy.MAX_DISAGREEMENT_CHARS
+        assert point.startswith(line.removesuffix("…"))
+        assert line.removesuffix("…").split()[-1] in point.split()
+
     def test_the_bedrock_path_reads_disagreements_and_drops_non_strings(self) -> None:
         bedrock, _ = _bedrock_with({"fields": list(GOOD),
                                     "disagreements": ["record vs page", 7, None]})

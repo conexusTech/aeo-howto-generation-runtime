@@ -281,3 +281,4 @@ rule promises, and it is worth a row rather than a silent assumption.
 ### Learning
 
 **A question is not a fact about the business, and the number checks had been treating it as one for good reason that does not carry over.** A question's text sources a number because a model may legitimately echo it; it must not source a claim, because "who offers a guarantee" is a searcher's wish, not this business's promise. So claims have their own, narrower source list, collected in `compose` beside the existing one. Break-proof: letting question text into it took `test_a_question_is_not_a_source_for_a_claim` red, and nothing else.
+- A disagreement note longer than 150 characters is cut at a word and ends with an ellipsis, never mid-thought (found reading the first real one on 2026-10-31).
