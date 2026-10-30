@@ -186,3 +186,143 @@ class TestUnsourcedNumbers:
         # Two separate inputs `555` and `1234567` must not join into a phone.
         why = reason("Call 555 123 4567.", inputs=["555", "123 4567"])
         assert why is not None
+
+
+# --- review round: currency formats, magnitude, phones, hours ----------------
+
+CURRENCY_FORMATS_MISSED_BEFORE = [
+    "a 40-dollar call-out fee",
+    "a 40-euro fee",
+    "40k dollars",
+    "1.5 million dollars",
+    "usd 40",
+    "eur 40",
+    "Usd40",
+    "99¢",
+    "＄40",  # fullwidth dollar sign
+    "₤40",
+    "1299 kr",
+    "Rs. 500",
+    "$.99",
+]
+
+
+class TestCurrencyFormatsWithPricesOff:
+    @pytest.mark.parametrize("text", CURRENCY_FORMATS_MISSED_BEFORE)
+    def test_each_format_refuses_the_field(self, text: str) -> None:
+        why = reason(f"Our rate: {text}.", allowed=False)
+        assert why is not None and "does not allow prices" in why, text
+
+    @pytest.mark.parametrize("text", CURRENCY_FORMATS_MISSED_BEFORE)
+    def test_each_format_refuses_the_field_standing_alone(self, text: str) -> None:
+        assert reason(text, allowed=False) is not None, text
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "open 7 days",
+            "since 1998",
+            "24/7",
+            "2 locations",
+            "We try 5 different methods.",
+            "Over 25 years and 300 customers.",
+            "50 percent of our work is repeat business.",
+        ],
+    )
+    def test_CONTROL_these_are_not_prices(self, text: str) -> None:
+        # About prices only: `24/7` is still an hours claim, checked elsewhere.
+        assert checks.find_prices(text) == [], text
+
+    @pytest.mark.parametrize(
+        "text", ["50 percent off", "Save 15 percent today", "20 per cent off", "50％ off"]
+    )
+    def test_a_percentage_discount_is_a_price_by_the_modules_own_rule(self, text: str) -> None:
+        # `percent_off` is a rule of this module (`20% off`, `save 15%`); the
+        # spelled-out forms are the same discount and are refused with it.
+        assert [f.pattern for f in checks.find_prices(text)] == ["percent_off"], text
+        assert reason(text, allowed=False) is not None
+
+
+class TestMagnitudeWithPricesOn:
+    LISTED = ["$40"]
+
+    @pytest.mark.parametrize(
+        "text", ["From $40k.", "From $40M.", "From $40 million.", "From $40 thousand.",
+                 "From 40k dollars.", "From $40bn."]
+    )
+    def test_a_scaled_amount_is_not_the_listed_one(self, text: str) -> None:
+        why = reason(text, allowed=True, listed=self.LISTED)
+        assert why is not None and "not on the organization's price list" in why, text
+
+    @pytest.mark.parametrize("text", ["From $40.", "From 40 dollars.", "From USD 40."])
+    def test_CONTROL_the_listed_amount_passes(self, text: str) -> None:
+        assert reason(text, allowed=True, listed=self.LISTED) is None, text
+
+    def test_a_listed_scaled_price_matches_its_scaled_draft(self) -> None:
+        assert reason("From $40k.", allowed=True, listed=["$40k"]) is None
+        assert reason("From $40.", allowed=True, listed=["$40k"]) is not None
+
+
+class TestPhoneSeparators:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Call 555–123–4567",  # en dash
+            "Call 555‑123‑4567",  # U+2011 non-breaking hyphen
+            "Call 555 - 123 - 4567",
+            "Text 07700 900123",
+        ],
+    )
+    def test_refused_when_the_inputs_do_not_hold_it(self, text: str) -> None:
+        why = reason(text, allowed=False)
+        assert why is not None and "a phone number" in why, text
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Call 555–123–4567",
+            "Call 555‑123‑4567",
+            "Call 555 - 123 - 4567",
+            "Text 07700 900123",
+        ],
+    )
+    def test_CONTROL_allowed_when_the_inputs_hold_the_same_number(self, text: str) -> None:
+        inputs = [text.split(" ", 1)[1]]
+        assert reason(text, allowed=False, inputs=inputs) is None, text
+
+    def test_CONTROL_the_same_number_in_a_different_dash_style_is_the_same_number(self) -> None:
+        assert reason("Call 555–123–4567", inputs=["555-123-4567"]) is None
+        assert reason("Call 555 - 123 - 4567", inputs=["(555) 123-4567"]) is None
+
+    def test_a_bare_run_of_seven_digits_does_not_source_a_formatted_phone(self) -> None:
+        # `ref 5551234` is a reference number, not a phone the record holds.
+        assert reason("Call 555-1234", inputs=["ref 5551234"]) is not None
+
+    def test_CONTROL_a_full_unbroken_national_number_still_sources(self) -> None:
+        assert reason("Call 555-123-4567", inputs=["5551234567"]) is None
+
+
+class TestHoursAreKeyedAcrossClocks:
+    @pytest.mark.parametrize(
+        ("draft", "source"),
+        [
+            ("Open from 9:00.", "Hours: 9:00 AM to 5:00 PM"),
+            ("Closes at 17:00.", "Hours: 9:00 AM to 5:00 PM"),
+            ("Open from 9am.", "opens 9:00"),
+            ("Closes at 5pm.", "closes 17:00"),
+            ("Open from 12:00 PM.", "lunch 12:00"),
+        ],
+    )
+    def test_the_same_time_in_either_form_is_sourced(self, draft: str, source: str) -> None:
+        assert reason(draft, inputs=[source]) is None
+
+    @pytest.mark.parametrize(
+        ("draft", "source"),
+        [
+            ("Open from 9:00 PM.", "Hours: 9:00 AM to 5:00 PM"),
+            ("Closes at 5:00.", "Hours: 9:00 AM to 5:00 PM"),
+            ("Closes at 17:30.", "Hours: 9:00 AM to 5:00 PM"),
+        ],
+    )
+    def test_a_different_time_is_not(self, draft: str, source: str) -> None:
+        assert reason(draft, inputs=[source]) is not None

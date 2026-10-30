@@ -37,6 +37,16 @@ name                matches                                     example
 A range (``$100-$200``, ``$100 to 200``) yields both ends. An amount in words
 cannot be compared with a list, so it is refused even when prices are allowed.
 
+Everything is NFKC-normalised first (fullwidth ``＄40`` is ``$40``) and every
+Unicode dash read as ``-``. Markers and ISO codes match in any case, before or
+after the amount, joined by nothing, a space or a hyphen: ``usd 40``, ``Usd40``,
+``40-dollar``, ``99¢``, ``₤40``, ``1299 kr``, ``Rs. 500``, ``$.99``. A magnitude
+(``k``, ``M``, ``thousand``, ``million``, ``bn``) scales the amount before it is
+compared, so ``$40k`` is not the listed ``$40``. ``percent_off`` is this module's
+rule for a percentage discount and reads ``%``, ``percent`` and ``per cent``
+alike; a percentage that is not a discount (``50 percent of our work``) is not a
+price.
+
 ⚠️ Bare ``pounds`` counts as money, so ``lose 10 pounds`` is refused. That is the
 safe direction: a refused field is a person's thirty-second fix, a price on a
 site that does not allow them is a false statement.
@@ -46,9 +56,10 @@ Unsourced numbers (`find_unsourced`):
 ==================  ==========================================  ================
 category            matches                                     example
 ==================  ==========================================  ================
-``phone``           7 to 15 digits in groups split by space,     ``(555) 123-4567``,
-                    dot or dash, optional ``+`` country code,    ``+44 20 7946 0958``,
-                    or one unbroken run of 7 to 15 digits        ``5551234567``
+``phone``           7 to 15 digits, groups of up to 8           ``(555) 123-4567``,
+                    split by space, dot or dash (any            ``+44 20 7946 0958``,
+                    Unicode dash), optional ``+`` code,         ``07700 900123``,
+                    or one unbroken run of 7 to 15 digits       ``5551234567``
 ``licence``         a licence/registration keyword then an id;   ``Lic. #123456``,
                     ``#`` then 3+ digits; 1-4 capitals then      ``#4471``,
                     4+ digits                                    ``ROC123456``, ``ISO9001``
@@ -64,7 +75,8 @@ Phone excludes an ISO date (``2026-10-30``), a dotted or slashed date
 
 How "sourced" is decided, per category:
 
-- **phone** — digits only; equal, or equal but for a country code of up to
+- **phone** — digits only; an unbroken run in the inputs sources a phone only
+  at 10+ digits (``ref 5551234`` is not a phone); equal, or equal but for a country code of up to
   three digits (a trunk ``0`` ignored) when the national number has 10+ digits.
   A 7-digit local number never sources a draft that adds an area code to it.
 - **licence** — the identifier's digits equal a digit run in the inputs.
@@ -72,8 +84,8 @@ How "sourced" is decided, per category:
   offer every ``<number> <word>`` pair they contain, so ``Avenue`` against
   ``Ave`` still matches; a suite as ``suite 200``; a ZIP or PO box by number; a
   UK postcode without its space.
-- **hours** — a canonical time: ``9am``, ``9 a.m.`` and ``9:00 AM`` are all
-  ``9:00am``; ``17:30`` stays ``17:30``.
+- **hours** — a 24-hour time: ``9am``, ``9 a.m.``, ``9:00 AM`` and ``9:00`` are
+  all ``9:00``; ``5pm``, ``5:00 PM`` and ``17:00`` are all ``17:00``.
 
 Every pattern is tested, with a sourced control beside it, in
 `tests/test_section_checks.py`.
@@ -82,12 +94,22 @@ Every pattern is tested, with a sourced control beside it, in
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
-#: An amount: `120`, `1,200`, `1.200,50`, `120.00`, `1.5`.
-_NUM = r"\d+(?:[,.]\d{3})*(?:[.,]\d{1,2})?"
+#: An amount: `120`, `1,200`, `1.200,50`, `120.00`, `1.5`, `.99`.
+_NUM = r"(?:\d+(?:[,.]\d{3})*(?:[.,]\d{1,2})?|\.\d{1,2})"
+
+#: A magnitude after an amount: `40k`, `40M`, `1.5 million`, `2bn`. Letters stand
+#: against the digits; words may be spaced or hyphenated.
+_MAG = r"(?:[\s-]?(?:thousand|million|billion|mil)|(?:k|mm|m|bn))(?![a-z])"
+_MAGNITUDE: dict[str, int] = {
+    "k": 10**3, "thousand": 10**3,
+    "m": 10**6, "mm": 10**6, "mil": 10**6, "million": 10**6,
+    "bn": 10**9, "billion": 10**9,
+}
 
 #: Currency marker -> the group it compares within. `$`, `USD`, `dollars` are
 #: one group so `USD 120` in a draft matches `$120` on the list.
@@ -95,51 +117,67 @@ _CURRENCY_GROUPS: dict[str, str] = {
     "$": "$", "us$": "$", "c$": "$", "a$": "$", "nz$": "$", "hk$": "$",
     "usd": "$", "cad": "$", "aud": "$", "nzd": "$", "hkd": "$", "sgd": "$",
     "mxn": "$", "dollar": "$", "dollars": "$", "buck": "$", "bucks": "$",
-    "cent": "$/100", "cents": "$/100",
-    "£": "£", "gbp": "£", "pound": "£", "pounds": "£", "quid": "£",
+    "cent": "$/100", "cents": "$/100", "¢": "$/100",
+    "£": "£", "₤": "£", "gbp": "£", "pound": "£", "pounds": "£", "quid": "£",
     "pence": "£/100",
     "€": "€", "eur": "€", "euro": "€", "euros": "€",
     "¥": "¥", "jpy": "¥", "cny": "¥",
-    "₹": "₹", "inr": "₹",
+    "₹": "₹", "inr": "₹", "rs": "₹",
     "r$": "R$", "chf": "CHF", "zar": "ZAR", "₩": "₩", "₽": "₽",
+    "kr": "kr", "sek": "kr", "nok": "kr", "dkk": "kr",
 }
 
-_SYMBOL = r"(?:US\$|C\$|A\$|NZ\$|HK\$|R\$|\$|£|€|¥|₹|₩|₽)"
-_CODE = r"(?:USD|EUR|GBP|CAD|AUD|NZD|HKD|SGD|MXN|JPY|CNY|INR|CHF|ZAR)"
+_SYMBOL = r"(?:US\$|C\$|A\$|NZ\$|HK\$|R\$|\$|£|₤|€|¥|₹|₩|₽|¢)"
+_CODE = (
+    r"(?:USD|EUR|GBP|CAD|AUD|NZD|HKD|SGD|MXN|JPY|CNY|INR|CHF|ZAR|SEK|NOK|DKK|PLN|"
+    r"AED|BRL|KRW|THB)"
+)
+#: Markers that are words rather than symbols or ISO codes.
+_KR_RS = r"(?:kr|rs\.?)"
 _WORD = r"(?:dollars?|bucks?|euros?|pounds?|quid|cents?|pence)"
-_RANGE = r"\s?(?:-|–|—|to)\s?"
+#: What may join a marker to its amount: nothing, a space or a hyphen.
+_JOIN = r"[\s-]?"
+_RANGE = r"\s?(?:-|to)\s?"
+_NUMBER_WORDS = (
+    r"(?:a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|"
+    r"thousand|few|several|couple of)"
+)
 
 _PRICE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "symbol_before",
         re.compile(
-            rf"(?P<cur>{_SYMBOL}|\b{_CODE})\s?(?P<a>{_NUM})"
-            rf"(?:{_RANGE}(?:{_SYMBOL}|{_CODE})?\s?(?P<b>{_NUM}))?"
+            rf"(?P<cur>{_SYMBOL}|\b{_CODE}|\b{_KR_RS}){_JOIN}"
+            rf"(?P<a>{_NUM})(?P<ma>{_MAG})?"
+            rf"(?:{_RANGE}(?:{_SYMBOL}|{_CODE})?{_JOIN}(?P<b>{_NUM})(?P<mb>{_MAG})?)?",
+            re.IGNORECASE,
         ),
     ),
     (
         "symbol_after",
         re.compile(
-            rf"(?<![\w.,$£€])(?:(?P<a>{_NUM}){_RANGE})?(?P<b>{_NUM})\s?"
-            rf"(?P<cur>{_SYMBOL}|{_CODE}\b|{_WORD}\b)",
+            rf"(?<![\w.,$£₤€])(?:(?P<a>{_NUM})(?P<ma>{_MAG})?{_RANGE})?"
+            rf"(?P<b>{_NUM})(?P<mb>{_MAG})?{_JOIN}"
+            rf"(?P<cur>{_SYMBOL}|{_CODE}\b|{_WORD}\b|{_KR_RS}\b)",
             re.IGNORECASE,
         ),
     ),
     (
         "number_words",
         re.compile(
-            r"\b(?:a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
-            r"twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|"
-            r"ninety|hundred|thousand|few|several|couple of)\s+"
-            r"(?:hundred\s+|thousand\s+)?(?P<cur>dollars|bucks|euros|pounds|quid)\b",
+            rf"\b{_NUMBER_WORDS}[\s-]+"
+            r"(?:hundred[\s-]+|thousand[\s-]+)?(?P<cur>dollars|bucks|euros|pounds|quid)\b",
             re.IGNORECASE,
         ),
     ),
     (
         "percent_off",
         re.compile(
-            rf"(?:\b(?:save|saving|discount of|reduction of)\s+(?P<a>{_NUM})\s?%)"
-            rf"|(?:(?<![\w.,])(?P<b>{_NUM})\s?%\s?(?:off|discount|cheaper|less)\b)",
+            rf"(?:\b(?:save|saving|discount of|reduction of)\s+(?P<a>{_NUM})\s?"
+            rf"(?:%|per\s?cent|pct))"
+            rf"|(?:(?<![\w.,])(?P<b>{_NUM})\s?(?:%|per\s?cent|pct)\s?"
+            rf"(?:off|discount|cheaper|less)\b)",
             re.IGNORECASE,
         ),
     ),
@@ -177,10 +215,33 @@ def _amount(raw: str) -> Decimal | None:
         return None
 
 
+#: Every dash-like character, read as a plain hyphen once NFKC has run.
+_DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d"), "-")
+
+
+def normalise(text: str) -> str:
+    """NFKC, then every Unicode dash as `-`.
+
+    Fullwidth `＄40` becomes `$40`, a non-breaking hyphen or en dash in a phone
+    number becomes the hyphen the patterns expect, and non-breaking spaces
+    become spaces. Run over drafts AND inputs, so the two compare alike.
+    """
+    return unicodedata.normalize("NFKC", text).translate(_DASHES)
+
+
+def _scaled(raw: str | None, magnitude: str | None) -> Decimal | None:
+    """An amount with its `k` / `million` / `bn` applied."""
+    value = _amount(raw) if raw else None
+    if value is None or not magnitude:
+        return value
+    return (value * _MAGNITUDE[magnitude.strip(" -").lower()]).normalize()
+
+
 def _group(marker: str | None) -> str | None:
     if marker is None:
         return None
-    return _CURRENCY_GROUPS.get(marker.strip().lower(), marker.strip().upper())
+    key = marker.strip().lower().rstrip(".")
+    return _CURRENCY_GROUPS.get(key, key.upper())
 
 
 def _price_key(group: str | None, value: Decimal | None) -> str:
@@ -195,6 +256,7 @@ def _price_key(group: str | None, value: Decimal | None) -> str:
 
 def find_prices(text: str) -> list[Finding]:
     """Every currency amount in `text`. A range yields both ends."""
+    text = normalise(text)
     findings: list[Finding] = []
     for name, pattern in _PRICE_PATTERNS:
         for match in pattern.finditer(text):
@@ -211,12 +273,17 @@ def find_prices(text: str) -> list[Finding]:
                 # A value in words cannot be compared with a list.
                 findings.append(Finding("price", name, match.group(0), f"{group}|words"))
                 continue
-            for raw in (groups.get("a"), groups.get("b")):
+            ma, mb = groups.get("ma"), groups.get("mb")
+            # `$40-50k` is forty thousand to fifty thousand: the closing
+            # magnitude reaches the opening amount when it has none of its own.
+            if groups.get("a") and groups.get("b") and not ma:
+                ma = mb
+            for raw, magnitude in ((groups.get("a"), ma), (groups.get("b"), mb)):
                 if raw:
                     findings.append(
                         Finding(
                             "price", name, match.group(0),
-                            _price_key(group, _amount(raw)),
+                            _price_key(group, _scaled(raw, magnitude)),
                         )
                     )
     return findings
@@ -235,8 +302,12 @@ def listed_price_keys(prices: Iterable[str]) -> set[str]:
         if found:
             keys.update(found)
             continue
-        for raw in re.findall(_NUM, price):
-            keys.add(_price_key(None, _amount(raw)))
+        for found_amount in re.finditer(
+            rf"(?P<n>{_NUM})(?P<m>{_MAG})?", normalise(price), re.IGNORECASE
+        ):
+            keys.add(
+                _price_key(None, _scaled(found_amount.group("n"), found_amount.group("m")))
+            )
     return keys
 
 
@@ -254,13 +325,13 @@ def price_is_listed(key: str, listed: set[str]) -> bool:
 _PHONE = re.compile(
     r"(?<![\w$£€.,/#])"
     r"(?:\+\s?\d{1,3}[\s.-]?)?(?:\(\d{1,4}\)[\s.-]?)?"
-    r"\d{1,5}(?:[\s.-]\d{1,5}){1,5}(?![\w%/])"
+    r"\d{1,8}(?:(?:\s*[.-]\s*|\s)\d{1,8}){1,5}(?![\w%/])"
     r"|(?<![\w$£€.,/#])\+?\d{7,15}(?![\w%/])"
 )
 _NOT_A_PHONE = (
     re.compile(r"^\d{4}-\d{2}-\d{2}$"),  # ISO date
     re.compile(r"^\d{1,2}[.-]\d{1,2}[.-]\d{2,4}$"),  # 30.10.2026
-    re.compile(r"^(?:19|20)\d{2}\s?-\s?(?:19|20)\d{2}$"),  # 2019-2026
+    re.compile(r"^(?:19|20)\d{2}\s*-\s*(?:19|20)\d{2}$"),  # 2019-2026
 )
 
 _LICENCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -344,6 +415,7 @@ def _digits(text: str) -> str:
 
 
 def _phones(text: str) -> list[Finding]:
+    text = normalise(text)
     out: list[Finding] = []
     for match in _PHONE.finditer(text):
         span = match.group(0).strip()
@@ -357,6 +429,7 @@ def _phones(text: str) -> list[Finding]:
 
 
 def _licences(text: str) -> list[Finding]:
+    text = normalise(text)
     out: list[Finding] = []
     for name, pattern in _LICENCE_PATTERNS:
         for match in pattern.finditer(text):
@@ -382,6 +455,7 @@ def _address_key(name: str, match: re.Match[str]) -> str:
 
 
 def _addresses(text: str) -> list[Finding]:
+    text = normalise(text)
     return [
         Finding("address", name, match.group(0), _address_key(name, match))
         for name, pattern in _ADDRESS_PATTERNS
@@ -390,8 +464,12 @@ def _addresses(text: str) -> list[Finding]:
 
 
 def _hours_key(name: str, match: re.Match[str]) -> str:
+    """A time as 24-hour `H:MM`, so `5pm`, `5:00 PM` and `17:00` are one key."""
     if name == "ampm":
-        return f"{int(match.group('h'))}:{match.group('m') or '00'}{match.group('ap').lower()}m"
+        hour = int(match.group("h")) % 12
+        if match.group("ap").lower() == "p":
+            hour += 12
+        return f"{hour}:{match.group('m') or '00'}"
     if name == "clock":
         return f"{int(match.group('h'))}:{match.group('m')}"
     if name == "always_open":
@@ -402,6 +480,7 @@ def _hours_key(name: str, match: re.Match[str]) -> str:
 
 
 def _hours(text: str) -> list[Finding]:
+    text = normalise(text)
     return [
         Finding("hours", name, match.group(0), _hours_key(name, match))
         for name, pattern in _HOURS_PATTERNS
@@ -434,7 +513,15 @@ def sourced_numbers(inputs: Iterable[str]) -> SourcedNumbers:
     for text in inputs:
         if not text:
             continue
-        phones.update(f.key for f in _phones(text))
+        text = normalise(text)
+        # A formatted number is a phone number at any length. An UNBROKEN run
+        # sources a phone only when it is a full national number (10+ digits):
+        # `ref 5551234` is a reference, and must not source `Call 555-1234`.
+        phones.update(
+            f.key
+            for f in _phones(text)
+            if len(f.key) >= 10 or not f.text.lstrip("+").isdigit()
+        )
         runs.update(re.findall(r"\d{3,}", text))
         runs.update(f.key for f in _licences(text))
         address.update(f.key for f in _addresses(text))
@@ -455,7 +542,7 @@ def sourced_numbers(inputs: Iterable[str]) -> SourcedNumbers:
 
 def _is_sourced(finding: Finding, sourced: SourcedNumbers) -> bool:
     if finding.category == "phone":
-        for known in sourced.phones | {r for r in sourced.digit_runs if len(r) >= 7}:
+        for known in sourced.phones:
             if known == finding.key:
                 return True
             # A country code in one and not the other: the longer may carry up
@@ -493,12 +580,27 @@ def _quote(text: str) -> str:
     return text if len(text) <= 40 else text[:37] + "..."
 
 
+def competitor_named(text: str, competitors: Iterable[str]) -> str | None:
+    """The first competitor `text` names, or None.
+
+    Case-insensitive, after NFKC, as a whole word or phrase: `Ace` is in
+    `Call Ace today` and not in `space`. Whitespace inside a name is flexible.
+    """
+    folded = " ".join(normalise(text).casefold().split())
+    for name in competitors:
+        needle = " ".join(normalise(name).casefold().split())
+        if needle and re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", folded):
+            return name
+    return None
+
+
 def refusal_reason(
     text: str,
     *,
     prices_allowed: bool,
     listed: set[str],
     sourced: SourcedNumbers,
+    competitors: Iterable[str] = (),
 ) -> str | None:
     """Why this text cannot be returned, or None when it can.
 
@@ -519,5 +621,11 @@ def refusal_reason(
         return (
             f"contains {_CATEGORY_LABEL[finding.category]} "
             f'("{_quote(finding.text)}") that the organization\'s record does not hold'
+        )
+    named = competitor_named(text, competitors)
+    if named is not None:
+        return (
+            f'names a competitor ("{_quote(named)}"); section copy never names or '
+            "compares with one"
         )
     return None

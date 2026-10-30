@@ -15,9 +15,10 @@ TR-3                                          allowlist       TR-1, TR-2      TR
    strings, only within the template's character limits, and `inputs_used` only
    from ids the prompt offered.
 5. **Post-check** every drafted field and every list item's fields: a price the
-   site does not allow or the list does not hold, or a phone, licence, address
-   or hours number the inputs do not hold, removes the WHOLE field and records
-   why (`section_checks.py`). The prompt asks; this enforces.
+   site does not allow or the list does not hold, a phone, licence, address
+   or hours number the inputs do not hold, or the name of a competitor, removes
+   the WHOLE field and records why (`section_checks.py`). The prompt asks; this
+   enforces. The inputs are what the prompt showed plus the person's edits.
 6. **Merge** the person's fields back in, word for word.
 7. **Measure** voice tells and similarity. Recorded, never enforced.
 
@@ -28,7 +29,7 @@ writes the section when a person accepts it.
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import Any, Iterable
 
 from app.config import Settings
 from app.howto_generation import section_checks, section_prompt, similarity, voice
@@ -46,19 +47,6 @@ from app.howto_generation.contracts import (
 from app.howto_generation.model import ChatModel, DraftedSectionCopy
 from app.howto_generation.runtime import _context_version, _organization_id
 from app.howto_generation import slots as slots_module
-
-#: Context keys never shown to the model (`prompt._org_context_block` excludes
-#: them for the same reason), and so never accepted as the source of a number:
-#: another product's prospect lists are not this organization's record.
-_UNSHOWN_CONTEXT_KEYS = frozenset(
-    {
-        "pipeline",
-        "known_companies",
-        "scoring_strategy",
-        "lead_scoring",
-        "discovery_project_signals",
-    }
-)
 
 _NOT_DRAFTED = "the model did not draft this field"
 
@@ -79,7 +67,9 @@ def find_edited_fields(
     whole value, so an edit to one item, a re-ordered item or a removed item
     all make the whole list the person's. A field in `current` that `baseline`
     never had is treated as the person's, the safe reading: the alternative lets
-    a later `discard` delete something somebody wrote.
+    a later `discard` delete something somebody wrote. A field `baseline` had
+    and `current` no longer has was DELETED by the person, which is an edit too:
+    `preserve` keeps it deleted, `discard` redrafts it.
 
     🔴 `baseline` is required whenever `current` is given, in both modes, for
     the reason `regenerate.py` gives for articles.
@@ -95,11 +85,12 @@ def find_edited_fields(
             "overwrite a person's words without being able to say so and "
             "`preserve` would claim to keep edits without knowing which.",
         )
-    return sorted(
+    changed = {
         name
         for name, value in current.items()
         if name not in baseline or baseline[name] != value
-    )
+    }
+    return sorted(changed | {name for name in baseline if name not in current})
 
 
 def _strings(value: Any) -> list[str]:
@@ -117,32 +108,13 @@ def _strings(value: Any) -> list[str]:
     return []
 
 
-def source_texts(request: SectionCopyRequest) -> list[str]:
-    """The inputs a number may come from: the context the model was shown, the
-    page, the questions, the price list and the section's current fields.
-
-    Not `generated_baseline` — that is the model's own earlier output, and a
-    number is not sourced by having been drafted before.
+def edited_texts(request: SectionCopyRequest, edited: list[str]) -> list[str]:
+    """The person's own words in the fields they edited: a source for a number,
+    because a person wrote it. Unedited `current_fields` are the model's earlier
+    output and not a source; neither is the baseline.
     """
-    texts: list[str] = []
-    for key, value in request.context.items():
-        if key not in _UNSHOWN_CONTEXT_KEYS:
-            texts.extend(_strings(value))
-    texts.append(request.page.title)
-    texts.append(request.page.page_type)
-    if request.page.address:
-        texts.append(request.page.address)
-    texts.extend(request.page.other_sections_text)
-    for question in request.questions:
-        texts.append(question.text)
-        texts.extend(question.competitors)
-        if question.top_cited_host:
-            texts.append(question.top_cited_host)
-    for entry in request.prices.items:
-        texts.extend([entry.item, entry.price])
-    if request.current_fields:
-        texts.extend(_strings(request.current_fields))
-    return texts
+    current = request.current_fields or {}
+    return [text for name in edited if name in current for text in _strings(current[name])]
 
 
 def _over_limit(text: str, limit: int | None) -> bool:
@@ -177,7 +149,7 @@ def normalize(
             if not isinstance(raw_items, list):
                 continue
             items: list[dict[str, str]] = []
-            too_long: str | None = None
+            problem: str | None = None
             for raw in raw_items:
                 if not isinstance(raw, dict):
                     continue
@@ -185,18 +157,27 @@ def normalize(
                 for item_spec in spec.item_fields:
                     value = raw.get(item_spec.name)
                     if isinstance(value, str) and value.strip():
-                        if _over_limit(value, item_spec.max_length) and too_long is None:
-                            too_long = (
+                        if _over_limit(value, item_spec.max_length) and problem is None:
+                            problem = (
                                 f"item {len(items) + 1}'s {item_spec.name} is longer "
                                 f"than the template's {item_spec.max_length} characters"
                             )
                         item[item_spec.name] = value
                 if item:
+                    # An item with something in it must hold every part the
+                    # template requires: a question with no answer is not a
+                    # complete list, and must not look like one.
+                    for item_spec in spec.item_fields:
+                        if item_spec.required and item_spec.name not in item and problem is None:
+                            problem = (
+                                f"item {len(items) + 1} is missing its required "
+                                f"{item_spec.name}"
+                            )
                     items.append(item)
             if not items:
                 continue
-            if too_long is not None:
-                refused[name] = too_long
+            if problem is not None:
+                refused[name] = problem
                 continue
             fields[name] = items
         else:
@@ -228,14 +209,20 @@ def post_check(
     fields: dict[str, Any],
     *,
     request: SectionCopyRequest,
+    sources: Iterable[str],
 ) -> dict[str, str]:
-    """TR-1 and TR-2 over every drafted field and every list item's fields.
+    """TR-1 and TR-2, and the competitor rule, over every drafted field and
+    every list item's fields.
+
+    `sources` is every text a number may come from: what the prompt showed
+    (`SectionCopyPrompt.source_texts`) plus the person's edited fields.
 
     Returns field name -> reason for each field that must be removed. A list is
     removed whole when any one of its items fails, since the list is one field.
     """
     listed = section_checks.listed_price_keys(e.price for e in request.prices.items)
-    sourced = section_checks.sourced_numbers(source_texts(request))
+    sourced = section_checks.sourced_numbers(sources)
+    competitors = [c for q in request.questions for c in q.competitors]
     refused: dict[str, str] = {}
     for name, value in fields.items():
         if isinstance(value, list):
@@ -246,6 +233,7 @@ def post_check(
                         prices_allowed=request.prices.allowed,
                         listed=listed,
                         sourced=sourced,
+                        competitors=competitors,
                     )
                     if reason is not None:
                         refused[name] = f"item {index}'s {key} {reason}"
@@ -258,6 +246,7 @@ def post_check(
                 prices_allowed=request.prices.allowed,
                 listed=listed,
                 sourced=sourced,
+                competitors=competitors,
             )
             if reason is not None:
                 refused[name] = reason
@@ -317,7 +306,8 @@ def handle(
         drafted, fields_to_draft=to_draft, offered_ids=composition.input_ids
     )
 
-    for name, reason in post_check(fields, request=request).items():
+    sources = [*composition.source_texts, *edited_texts(request, edited)]
+    for name, reason in post_check(fields, request=request, sources=sources).items():
         fields.pop(name, None)
         notes.pop(name, None)
         refused[name] = reason
@@ -335,7 +325,10 @@ def handle(
     # longer declares: dropping it would lose a person's words silently.
     current = request.current_fields or {}
     for name in preserved:
-        fields[name] = copy.deepcopy(current[name])
+        # A field the person DELETED stays deleted: it is preserved by being
+        # absent, not by a value.
+        if name in current:
+            fields[name] = copy.deepcopy(current[name])
 
     # Template order first, then any preserved field the template lacks.
     order = [f.name for f in request.template.fields]

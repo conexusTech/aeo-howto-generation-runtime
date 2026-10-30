@@ -31,7 +31,12 @@ from app.howto_generation.contracts import (
     SlotResolution,
     TemplateSlot,
 )
-from app.howto_generation.prompt import _facts_block, _fence, _org_context_block
+from app.howto_generation.prompt import (
+    _facts_block,
+    _fence,
+    _org_context_block,
+    _strip_markers,
+)
 from app.howto_generation.voice import voice_rules_for_prompt
 
 #: The facts a section may state, by the slot names the resolver knows. Phone,
@@ -50,6 +55,19 @@ FACT_SLOTS: tuple[str, ...] = (
     "email",
     "opening_hours",
 )
+
+#: How much of the request the prompt carries, like the sections (12), the
+#: competitors per question (10) and the price list (50). A section targets a
+#: handful of questions, so 12 is generous; 300 characters is a question, not an
+#: essay. Whatever is cut here is not shown, and so is not a source either.
+MAX_QUESTIONS = 12
+MAX_QUESTION_CHARS = 300
+MAX_OTHER_SECTIONS = 12
+MAX_OTHER_SECTION_CHARS = 1500
+MAX_COMPETITORS = 10
+MAX_PRICES = 50
+MAX_PRESERVED_NAMES = 30
+MAX_NAME_CHARS = 60
 
 _BASELINE = """\
 You write the copy for one section of a business's own website.
@@ -106,6 +124,10 @@ class SectionCopyPrompt:
     page_title: str = ""
     #: Every input id offered to the model. The allowlist for `inputs_used`.
     input_ids: frozenset[str] = field(default_factory=frozenset)
+    #: Each piece of text, exactly as shown, that a number in the draft may be
+    #: sourced from. Collected where the prompt is composed, so what the model
+    #: saw and what sources a number cannot drift apart.
+    source_texts: tuple[str, ...] = ()
 
     def split(self) -> tuple[str, str]:
         return self.stable, self.volatile
@@ -120,6 +142,12 @@ def resolve_facts(context: dict[str, Any]) -> SlotResolution:
 def _one_line(value: Any) -> str:
     """Collapse whitespace so no value can start a fresh line of instruction."""
     return " ".join(str(value).split()) if value is not None else ""
+
+
+def _safe_name(name: Any) -> str:
+    """A field name from the request, made safe to put outside the fence: one
+    line, no fence marker, bounded."""
+    return _strip_markers(_one_line(name), ("<<<", ">>>"))[:MAX_NAME_CHARS]
 
 
 def _field_line(spec: SectionTemplateField) -> list[str]:
@@ -166,17 +194,30 @@ def compose(
     The business sits in the STABLE half, as for articles: one organization
     drafts many sections, so the organization is what repeats.
     """
-    stable = "\n\n".join([_BASELINE, _org_context_block(request.context)])
+    org_block = _org_context_block(request.context)
+    stable = "\n\n".join([_BASELINE, org_block])
 
     input_ids: set[str] = set(facts.resolved) | set(_business_ids(request.context))
 
+    # Everything the model is shown that a number could come from is recorded
+    # here as it is written into the prompt — never rebuilt from the request
+    # afterwards — so a cap or a slice changed here changes the sources too.
+    sources: list[str] = [line for line in org_block.splitlines() if line.strip()]
+
+    def shown(value: Any, limit: int | None = None) -> str:
+        text = _one_line(value)
+        if limit is not None:
+            text = text[:limit]
+        sources.append(text)
+        return text
+
     # --- the page and the questions, fenced: tenant and third-party text ----
     data: list[str] = ["THE PAGE"]
-    data.append(f"- [page.title] Title: {_one_line(request.page.title)}")
-    data.append(f"- Page type: {_one_line(request.page.page_type)}")
+    data.append(f"- [page.title] Title: {shown(request.page.title)}")
+    data.append(f"- Page type: {shown(request.page.page_type)}")
     input_ids.add("page.title")
     if request.page.address:
-        data.append(f"- [page.address] Address on the site: {_one_line(request.page.address)}")
+        data.append(f"- [page.address] Address on the site: {shown(request.page.address)}")
         input_ids.add("page.address")
     others = [t for t in request.page.other_sections_text if t and t.strip()]
     if others:
@@ -184,23 +225,29 @@ def compose(
             "- [page.other_sections] What the page's other sections already say "
             "(do not repeat it):"
         )
-        data.extend(f"    - {_one_line(t)[:1500]}" for t in others[:12])
+        data.extend(
+            f"    - {shown(t, MAX_OTHER_SECTION_CHARS)}" for t in others[:MAX_OTHER_SECTIONS]
+        )
         input_ids.add("page.other_sections")
 
     data.append("\nTHE QUESTIONS THIS SECTION IS MEANT TO WIN")
-    if request.questions:
-        for question in request.questions:
+    questions = request.questions[:MAX_QUESTIONS]
+    question_pairs: list[tuple[str, str]] = []
+    if questions:
+        for question in questions:
             qid = f"question:{_one_line(question.id)}"
             input_ids.add(qid)
-            data.append(f"- [{qid}] {_one_line(question.text)}")
+            text = shown(question.text, MAX_QUESTION_CHARS)
+            question_pairs.append((question.id, text))
+            data.append(f"- [{qid}] {text}")
             data.append(f"    - Today: {_VERDICTS[question.verdict]}")
             if question.competitors:
-                named = ", ".join(_one_line(c) for c in question.competitors[:10])
+                named = ", ".join(shown(c) for c in question.competitors[:MAX_COMPETITORS])
                 data.append(f"    - Competitors answer engines name: {named}")
             if question.top_cited_host:
                 data.append(
                     f"    - The source answer engines cite most: "
-                    f"{_one_line(question.top_cited_host)}"
+                    f"{shown(question.top_cited_host)}"
                 )
     else:
         data.append("- (none given: write for the page's title)")
@@ -210,19 +257,20 @@ def compose(
             "\nTHE PRICE LIST. The ONLY amounts you may write, each exactly as listed:"
         )
         if request.prices.items:
-            for index, entry in enumerate(request.prices.items[:50], start=1):
+            for index, entry in enumerate(request.prices.items[:MAX_PRICES], start=1):
                 pid = f"price:{index}"
                 input_ids.add(pid)
-                data.append(
-                    f"- [{pid}] {_one_line(entry.item)}: {_one_line(entry.price)}"
-                )
+                data.append(f"- [{pid}] {shown(entry.item)}: {shown(entry.price)}")
         else:
             data.append("- (empty: write no amount at all)")
+
+    facts_block = _facts_block(facts)
+    sources.extend(line for line in facts_block.splitlines() if line.strip())
 
     task: list[str] = [
         "\n".join(_fence(data)),
         "",
-        _facts_block(facts),
+        facts_block,
     ]
     if not request.prices.allowed:
         task.append(
@@ -235,9 +283,12 @@ def compose(
     for spec in fields_to_draft:
         task.extend(_field_line(spec))
     if preserved:
+        # Names come from the request, so they are made one line and stripped
+        # of fence markers like any other text that sits outside the fence.
         task.append(
             "\nThese fields were written by a person and are kept as they are; "
-            "do not write them: " + ", ".join(preserved)
+            "do not write them: "
+            + ", ".join(_safe_name(n) for n in preserved[:MAX_PRESERVED_NAMES])
         )
 
     task.append(
@@ -256,7 +307,8 @@ def compose(
         stable=stable,
         volatile="\n".join(task),
         fields_to_draft=tuple(fields_to_draft),
-        questions=tuple((q.id, q.text) for q in request.questions),
+        questions=tuple(question_pairs),
         page_title=request.page.title,
         input_ids=frozenset(input_ids),
+        source_texts=tuple(sources),
     )

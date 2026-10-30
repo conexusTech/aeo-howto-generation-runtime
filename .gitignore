@@ -6,3 +6,4 @@ __pycache__/
 .mypy_cache/
 .env
 *.egg-info/
+.DS_Store
