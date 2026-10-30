@@ -470,12 +470,12 @@ def compose(
 
     if entry:
         task.append(
-            f"\nTHE ENTRY: {_one_line(request.template.name)}. One entry of a "
+            f"\nTHE ENTRY: {_safe_name(request.template.name)}. One entry of a "
             "collection on the site; the copy is the whole entry, not a section "
             "of a page."
         )
     else:
-        task.append(f"\nTHE SECTION: {_one_line(request.template.name)}")
+        task.append(f"\nTHE SECTION: {_safe_name(request.template.name)}")
     task.append("Write these fields:")
     for spec in fields_to_draft:
         task.extend(_field_line(spec, placed))
