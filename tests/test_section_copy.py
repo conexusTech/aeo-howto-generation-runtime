@@ -1352,3 +1352,31 @@ class TestCollectionEntries:
     def test_an_entry_request_is_served(self, client: TestClient) -> None:
         body = client.post("/invocations", json=payload(subject="entry")).json()
         assert body["task"] == "section_copy" and body["refused"] == {}
+
+
+class TestRichTextHasNoTopHeading:
+    def test_the_markdown_subset_is_in_the_stable_half(self) -> None:
+        stable = flat(prompt_for().stable)
+        assert "RICH TEXT: THE MARKDOWN THE SITE SHOWS." in stable
+        assert 'Never use a single "# " heading' in stable
+
+    def test_a_top_heading_in_rich_text_is_demoted(self) -> None:
+        body = "# Where is your shut-off\n\nFind it first.\n\n# Then turn it"
+        result = run(request(), drafted(GOOD[0], {"name": "body", "text": body}, GOOD[2]))
+        assert result.fields["body"] == (
+            "## Where is your shut-off\n\nFind it first.\n\n## Then turn it"
+        )
+
+    def test_a_top_heading_in_a_list_item_s_rich_text_is_demoted(self) -> None:
+        faqs = {"name": "faqs", "items": [{"question": "How fast?", "answer": "# Same day"}]}
+        result = run(request(), drafted(GOOD[0], GOOD[1], faqs))
+        assert result.fields["faqs"] == [{"question": "How fast?", "answer": "## Same day"}]
+
+    def test_CONTROL_deeper_headings_and_hashes_mid_line_are_kept(self) -> None:
+        body = "## Kept\n### Also kept\nCall #1 plumber\n#hashtag"
+        result = run(request(), drafted(GOOD[0], {"name": "body", "text": body}, GOOD[2]))
+        assert result.fields["body"] == body
+
+    def test_CONTROL_plain_text_is_left_alone(self) -> None:
+        result = run(request(), drafted({"name": "headline", "text": "# Drains"}, GOOD[1], GOOD[2]))
+        assert result.fields["headline"] == "# Drains"

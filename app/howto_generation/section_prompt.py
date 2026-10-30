@@ -156,6 +156,13 @@ in disagreement with the page: take what the business does from the inputs
 that do say, and do not report it. Only two specific claims that conflict are a
 disagreement.
 
+RICH TEXT: THE MARKDOWN THE SITE SHOWS.
+A rich text field is shown on the site as markdown, and only this much of it:
+paragraphs separated by a blank line, "## " and "### " headings, **bold**,
+_italic_, "- " bulleted lists, and [links](/path). Never use a single "# "
+heading: the page already has its title, so a rich text field never opens by
+repeating it.
+
 LINKS: A LABEL SAYS WHERE IT GOES.
 Some fields are the label of a link or a button. WHERE THE LINKS GO, when it is
 there, says what each one opens. A label must describe what happens when it is

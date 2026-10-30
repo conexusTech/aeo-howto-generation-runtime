@@ -129,6 +129,16 @@ def edited_texts(request: SectionCopyRequest, edited: list[str]) -> list[str]:
     return [text for name in edited if name in current for text in _strings(current[name])]
 
 
+_TOP_HEADING = re.compile(r"^#(?=[ \t])", re.MULTILINE)
+
+
+def _demote_top_headings(text: str) -> str:
+    """A `# ` heading is the page's own title, which the site renders itself and
+    the template's markdown does not: demote every one to `## `, which it does.
+    """
+    return _TOP_HEADING.sub("##", text)
+
+
 def _over_limit(text: str, limit: int | None) -> bool:
     return limit is not None and len(text) > limit
 
@@ -169,6 +179,8 @@ def normalize(
                 for item_spec in spec.item_fields:
                     value = raw.get(item_spec.name)
                     if isinstance(value, str) and value.strip():
+                        if item_spec.kind == "rich_text":
+                            value = _demote_top_headings(value)
                         if _over_limit(value, item_spec.max_length) and problem is None:
                             problem = (
                                 f"item {len(items) + 1}'s {item_spec.name} is longer "
@@ -196,6 +208,8 @@ def normalize(
             value = entry.get("text")
             if not isinstance(value, str) or not value.strip():
                 continue
+            if spec.kind == "rich_text":
+                value = _demote_top_headings(value)
             if _over_limit(value, spec.max_length):
                 refused[name] = (
                     f"longer than the template's {spec.max_length} characters"
