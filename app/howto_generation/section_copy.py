@@ -22,7 +22,8 @@ TR-3                                          allowlist       TR-1, TR-2      TR
 6. **Merge** the person's fields back in, word for word.
 7. **Measure** voice tells and similarity, and **note** a claim term no
    business input uses (`claim:`) and each point the model found the record
-   and the page disagree on (`disagreement:`). Recorded, never enforced. The
+   and the page disagree on (`disagreement:`), unless the line names a
+   catch-all value the record holds ("Other"). Recorded, never enforced. The
    notes ride in `audit.voice_tells`, the one list of notes the gateway
    already stores and shows.
 
@@ -33,6 +34,7 @@ writes the section when a person accepts it.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Iterable
 
 from app.config import Settings
@@ -305,12 +307,72 @@ def _bounded(line: str) -> str:
     return cut.rstrip(" ,;:.") + "…"
 
 
-def disagreement_notes(disagreements: Iterable[str]) -> list[str]:
+#: Record values that say nothing about what a business does. Compared after
+#: trimming and lowercasing; a record holding one cannot disagree with a page.
+CATCH_ALL_VALUES = frozenset(
+    {
+        "other", "others", "n/a", "na", "none", "general", "misc",
+        "miscellaneous", "unknown", "unspecified", "not specified", "various",
+    }
+)
+_QUOTES = "\"'\u2018\u2019\u201c\u201d"
+
+
+def catch_all_record_values(context: dict[str, Any]) -> list[str]:
+    """The organization record's values that are catch-alls ("Other", "N/A"),
+    exactly as the record writes them. Blank values are not here: a line cannot
+    name nothing, so the prompt alone carries that half of the rule."""
+    organization = context.get("organization")
+    if not isinstance(organization, dict):
+        return []
+    return sorted(
+        {
+            value.strip()
+            for value in organization.values()
+            if isinstance(value, str) and value.strip().lower() in CATCH_ALL_VALUES
+        }
+    )
+
+
+def names_catch_all(line: str, values: Iterable[str]) -> bool:
+    """Whether a disagreement line names one of the record's catch-all values.
+
+    Named means quoted, in any case (`"other"`), or written exactly as the
+    record writes it in the middle of a sentence, when that spelling has a
+    capital letter (`as Other`, `N/A`). Prose never trips it: lowercase
+    `other` is a word, and a capital at the start of a sentence is grammar.
+    """
+    for value in values:
+        quoted = re.compile(
+            rf"[{_QUOTES}]\s*{re.escape(value)}\s*[{_QUOTES}]", re.IGNORECASE
+        )
+        if quoted.search(line):
+            return True
+        if not any(ch.isupper() for ch in value):
+            continue
+        for match in re.finditer(rf"(?<!\w){re.escape(value)}(?!\w)", line):
+            before = line[: match.start()].rstrip()
+            if before and before[-1] not in ".!?":
+                return True
+    return False
+
+
+def disagreement_notes(
+    disagreements: Iterable[str], *, catch_alls: Iterable[str] = ()
+) -> list[str]:
     """`disagreement:<line>` per point the model reported, one line each,
-    bounded, deduplicated, in the model's order."""
+    bounded, deduplicated, in the model's order.
+
+    A line naming one of the record's catch-all values (`catch_alls`, from
+    `catch_all_record_values`) is dropped: "Other" says nothing about what the
+    business does, so it cannot disagree with a page, and the prompt says so.
+    """
+    values = list(catch_alls)
     lines: list[str] = []
     for raw in disagreements:
         if not isinstance(raw, str):
+            continue
+        if values and names_catch_all(" ".join(raw.split()), values):
             continue
         line = _bounded(" ".join(raw.split()))
         if line and line not in lines:
@@ -425,7 +487,10 @@ def handle(
         voice_tells=[
             *voice.find_tells(drafted_text),
             *notes_on_claims,
-            *disagreement_notes(drafted.disagreements),
+            *disagreement_notes(
+                drafted.disagreements,
+                catch_alls=catch_all_record_values(request.context),
+            ),
         ],
     )
 

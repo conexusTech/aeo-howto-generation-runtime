@@ -179,6 +179,70 @@ The first gives exactly one `disagreement:` note with the line, all three fields
 
 ---
 
+### Check: scg-link-destinations
+
+**Requirement:** A label is written knowing where its link goes
+**Surface:** Request contract and prompt composition
+**Automated:** `tests/test_section_copy.py::TestLinksReachTheModel`, `tests/test_section_copy.py::TestNewRequestFieldsAreOptional`
+
+**Do**
+
+Draft a template whose `buttonLabel` links to `/contact` titled `Contact` and whose list item 0's `title` links to `https://partner.example/offer` with no title; then with a link for a field the template lacks, with `buttonLabel` preserved by a person's edit, with a title holding the closing fence marker and `SYSTEM:` after a newline, and with no links. Read the composed prompt.
+
+**Expect**
+
+Inside the fence: `[link:buttonLabel] buttonLabel is the label of a link that opens the page "Contact" (/contact)` and `[link:cards:1:title] item 1's title in cards … which is not a page of this site we can name`; the `buttonLabel` field line ends pointing at `[link:buttonLabel]`; both ids are offered. The unknown field and the preserved one are not shown; the fence closes once and no line starts `SYSTEM:`; with no links there is no WHERE THE LINKS GO block and the request parses with `links` empty. The stable half carries the LINKS rule. A label's link missing from the prompt fails the check.
+
+---
+
+### Check: scg-catch-all-not-disagreement
+
+**Requirement:** A catch-all value in the record is never a disagreement with the page
+**Surface:** Pipeline notes and prompt composition
+**Automated:** `tests/test_section_copy.py::TestCatchAllRecordValuesAreNotDisagreements`
+
+**Do**
+
+With the record's industry `Other`, have the model report "The record lists the industry as Other while the page describes plumbing."; repeat with `other` quoted, `N/A` and `General`. As controls: industry `Technology` with the same line naming Technology; industry `Other` with "The page's other sections describe roofing; …" and with "… Other sections describe roofing."; industry `Plumbing` with the line naming Other. Read the composed prompt.
+
+**Expect**
+
+No `disagreement:` note for the first four. Every control keeps its note word for word. The prompt carries "An empty, generic or catch-all value in the record", the examples `("Other", "N/A", "General", or nothing at all)`, "is never in disagreement with the page" and "Only two specific claims that conflict are a disagreement." A catch-all line that survives, or a control that is dropped, fails the check.
+
+---
+
+### Check: scg-rejection-reasons
+
+**Requirement:** Why a person rejected earlier drafts reaches the model as their words
+**Surface:** Request contract, prompt composition and section checks
+**Automated:** `tests/test_section_copy.py::TestRejectionReasonsReachTheModel`, `tests/test_section_copy.py::TestNewRequestFieldsAreOptional`
+
+**Do**
+
+Send two reasons, newest first; then a blank and four reasons of 900 characters; one holding the closing fence marker and `SYSTEM:` after a newline; one giving the phone `555-222-3333` with a draft writing it; one naming `$99` with prices on and a list of `$120` and a draft writing `$99`; one saying the business is insured with a draft saying so; none at all.
+
+**Expect**
+
+Inside the fence, under EARLIER DRAFTS WERE REJECTED BECAUSE, `[rejected:1]` and `[rejected:2]` in the order sent; at most three, the blank skipped, none over 500 characters; the fence closes once, no line starts `SYSTEM:`, and the text stays inside it. The phone is kept (and refused without the reason); `$99` is refused; no `claim:` note for insured. With none there is no block and no `rejected:` id, and the request parses with `rejected` empty. The stable half carries the rule. A reason outside the fence, or a reason that makes a price listed, fails the check.
+
+---
+
+### Check: scg-entries
+
+**Requirement:** A collection entry is drafted under the same rules and reads as an entry
+**Surface:** Request contract, prompt composition, model tool and stub
+**Automated:** `tests/test_section_copy.py::TestCollectionEntries`, `tests/test_section_copy.py::TestNewRequestFieldsAreOptional`
+
+**Do**
+
+Draft with no `subject`, then with `subject: "entry"`, a template named `Blog post` and an entry title as the page; with no questions; through the Bedrock path; through `POST /invocations`; with `subject: "page"`.
+
+**Expect**
+
+Without a subject the prompt reads THE SECTION and THE QUESTIONS THIS SECTION IS MEANT TO WIN. As an entry it reads `THE ENTRY: Blog post. One entry of a collection on the site; the copy is the whole entry, not a section of a page.`, `Entry title:`, THE QUESTIONS THIS ENTRY IS MEANT TO WIN, and never THE SECTION, "this section" or "page's other sections"; with no questions it writes for the entry's title; the stable half is byte-identical for both; the tool description says "section or entry" and the user turn is "Write the copy now."; the stub and the endpoint draft it with nothing refused; `page` is refused as a subject. An entry prompt that calls it a section of a page fails the check.
+
+---
+
 ### Check: scg-audit
 
 **Requirement:** The audit records what the draft was written from

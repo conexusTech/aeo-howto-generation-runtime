@@ -324,8 +324,9 @@ _ARTICLE_TOOL: dict[str, Any] = {
 _SECTION_COPY_TOOL: dict[str, Any] = {
     "name": "emit_section_copy",
     "description": (
-        "Emit the section's copy. Call this exactly once; it is the only way "
-        "your work is delivered. One entry per field, by its exact name."
+        "Emit the copy for the section or entry. Call this exactly once; it "
+        "is the only way your work is delivered. One entry per field, by its "
+        "exact name."
     ),
     "input_schema": {
         "type": "object",
@@ -414,7 +415,7 @@ class BedrockChatModel(ChatModel):
         data, usage = self._stream_tool_call(
             stable=stable,
             volatile=volatile,
-            user_text="Write the section's copy now.",
+            user_text="Write the copy now.",
             tool=_SECTION_COPY_TOOL,
             label="section copy",
         )

@@ -62,13 +62,17 @@ A success carries `title`, `sections`, `slots`, `similarity`, `regeneration`
 
 ## Section copy, in brief
 
-Request: `task`, `template` (`key`, `name`, `fields[]` of `name`, `max_length`,
-`kind` text / rich_text / list, `item_fields[]`, `required`), `page` (`title`,
-`page_type`, `address`, `other_sections_text[]`), `questions[]` (`id`, `text`,
-`verdict` lost / missing / earned / unmeasured, `competitors[]`,
-`top_cited_host`), `context`, `prices` (`allowed`, `list[]` of `item`, `price`;
-off when absent), `current_fields`, `generated_baseline`, `edit_policy`,
-`corpus[]` (`draft_id`, `organization_id`, `text`).
+Request: `task`, `subject` (`section` / `entry`; `section` when absent),
+`template` (`key`, `name`, `fields[]` of `name`, `max_length`,
+`kind` text / rich_text / list, `item_fields[]`, `required`; `links[]` of
+`field`, `href`, `target` or null, `item` 0-based or absent; empty when absent),
+`page` (`title`, `page_type`, `address`, `other_sections_text[]`),
+`questions[]` (`id`, `text`, `verdict` lost / missing / earned / unmeasured,
+`competitors[]`, `top_cited_host`), `context`, `prices` (`allowed`, `list[]` of
+`item`, `price`; off when absent), `current_fields`, `generated_baseline`,
+`edit_policy`, `rejected[]` (`reason`, `at`; newest first, at most three shown;
+empty when absent), `corpus[]` (`draft_id`, `organization_id`, `text`). For an
+entry, `template` is the collection's entry schema and `page` the entry's own.
 
 Response: `task`, `fields`, `field_notes` (`inputs_used` per field), `refused`
 (field to reason), `preserved_fields`, `discarded_fields`, `edit_policy`,

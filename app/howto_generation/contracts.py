@@ -296,12 +296,32 @@ class SectionTemplateField(BaseModel):
     required: bool = False
 
 
+class SectionLink(BaseModel):
+    """Where a label field's link goes, so the label can say so.
+
+    `field` names the label field: a template field when `item` is absent, or
+    an item field of a list field when `item` is the 0-based index of the item.
+    `target` is the title of the site page the link opens; None when the link
+    leaves the site or the page is not known. A link naming a field the
+    template does not declare is ignored, not refused.
+    """
+
+    model_config = _INBOUND
+
+    field: str
+    href: str
+    target: str | None = None
+    item: int | None = Field(default=None, ge=0)
+
+
 class SectionTemplate(BaseModel):
     model_config = _INBOUND
 
     key: str
     name: str
     fields: list[SectionTemplateField] = Field(min_length=1)
+    #: The links the section's label fields carry. Absent from an older gateway.
+    links: list[SectionLink] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _field_names_are_unique(self) -> SectionTemplate:
@@ -370,6 +390,17 @@ class PricePolicy(BaseModel):
     items: list[PriceEntry] = Field(default_factory=list, alias="list")
 
 
+class RejectedDraft(BaseModel):
+    """A reason a person gave for rejecting an earlier draft of this same
+    section or entry. The person's own words: shown to the model inside the
+    data fence, never as an instruction."""
+
+    model_config = _INBOUND
+
+    reason: str
+    at: str | None = None
+
+
 class SectionCorpusDraft(BaseModel):
     """Another organization's draft from the same site template (similarity).
 
@@ -387,6 +418,11 @@ class SectionCopyRequest(BaseModel):
     model_config = _INBOUND
 
     task: Literal["section_copy"]
+    #: What the copy is for: one section of a page, or one entry of a
+    #: collection (a blog post, a case study), whose template is the
+    #: collection's entry schema and whose page is the entry's own. Changes the
+    #: prompt's wording only.
+    subject: Literal["section", "entry"] = "section"
     template: SectionTemplate
     page: SectionPage
     questions: list[TargetQuestion] = Field(default_factory=list)
@@ -401,6 +437,9 @@ class SectionCopyRequest(BaseModel):
     #: `regenerate.py` gives: without it an edit and a draft are the same bytes.
     generated_baseline: dict[str, Any] | None = None
     edit_policy: Literal["preserve", "discard"] = "preserve"
+    #: Why a person rejected earlier drafts of this section or entry, newest
+    #: first. The gateway sends at most three; the prompt shows at most three.
+    rejected: list[RejectedDraft] = Field(default_factory=list)
 
     corpus: list[SectionCorpusDraft] = Field(default_factory=list)
 

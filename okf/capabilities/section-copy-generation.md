@@ -19,7 +19,11 @@ The suite runs every scenario against a fake model: the post-checks are shown on
 quality of the copy is not a scenario because it cannot fail. **The first real-model run (2026-10-31)** found
 copy that was well written, price-free and kept a person's edits, but invented how the business operates and,
 where the record and the page disagreed, told readers the business does not do what its own page offers. The
-two scenarios on claims and disagreements are the answer to that run.
+two scenarios on claims and disagreements are the answer to that run. **A second real-model run the same day**
+found a button label rewritten to promise a page the button does not open, a record industry of "Other"
+reported as disagreeing with the page, and reasons a person gave for rejecting earlier drafts never reaching
+the model; collection entries are drafted from that day too. The four scenarios after the disagreement one
+answer it.
 
 Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-resolution.md) ·
 [regeneration](/lib/regeneration.md) · [emit-only](/business/emit-only.md) ·
@@ -93,6 +97,44 @@ Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-res
 - AND the prompt tells the model to assert neither version of the disputed point and to report each one
 
 **Checked by:** scg-disagreements-noted
+
+#### Scenario: A label is written knowing where its link goes
+
+- GIVEN a section whose button label opens the site's contact page, and a card in a list whose title links off the site
+- WHEN its copy is drafted
+- THEN the prompt shows, inside the data fence, that the label opens the page "Contact" (/contact) and that item 1's title opens an address that is not a page of the site, and the label's own field line points at it
+- AND the prompt tells the model a label must describe where the link goes and never promise a destination the link does not have
+- AND a link naming a field the template lacks, or a field a person's edit preserves, is not shown, a page title cannot close the fence or start an instruction, and a request with no links is drafted as before
+
+**Checked by:** scg-link-destinations
+
+#### Scenario: A catch-all value in the record is never a disagreement with the page
+
+- GIVEN a record whose industry is "Other", "N/A" or "General", and a page about one line of work
+- WHEN the model reports that the record's industry disagrees with the page
+- THEN no disagreement note is returned, and the draft is otherwise unchanged
+- AND a specific record value that conflicts with the page is still noted, as is a line about something else on a record holding "Other", and the word other in ordinary prose drops nothing
+- AND the prompt tells the model that an empty, generic or catch-all record value says nothing about what the business does, and that only two specific conflicting claims are a disagreement
+
+**Checked by:** scg-catch-all-not-disagreement
+
+#### Scenario: Why a person rejected earlier drafts reaches the model as their words
+
+- GIVEN reasons a person gave for rejecting earlier drafts of this same section, newest first
+- WHEN the copy is drafted again
+- THEN the prompt shows at most three reasons, in order, inside the data fence, and tells the model not to repeat what a reason objects to and to keep a fact a reason insists on
+- AND a phone number or a claim a reason states may be written, a price a reason names is still refused unless the price list holds it, a reason cannot close the fence or start an instruction, and with no reasons nothing is shown
+
+**Checked by:** scg-rejection-reasons
+
+#### Scenario: A collection entry is drafted under the same rules and reads as an entry
+
+- GIVEN a request for one entry of a blog collection, with the entry's title as its page
+- WHEN its copy is drafted
+- THEN the prompt calls it an entry of a collection whose copy is the whole entry, names the entry's title and the questions this entry is meant to win, and never calls it a section of a page
+- AND every rule is the same as for a section, the cached half of the prompt is identical for both, a request that does not say which is a section, and the stub drafts an entry cleanly
+
+**Checked by:** scg-entries
 
 #### Scenario: A person's edited field is kept by name, word for word
 

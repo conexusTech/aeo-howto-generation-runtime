@@ -4,7 +4,7 @@ title: Section copy
 description: The second task on POST /invocations. Copy for one section of an organization's own site, written for the questions the section is meant to win, with prices, phone, licence, address and hours numbers re-checked in code after the model answers, and a person's edited fields kept word for word.
 resource: app/howto_generation/section_copy.py
 tags: [meriwether-sites, section-copy, refusal, merge]
-timestamp: 2026-10-30
+timestamp: 2026-10-31
 ---
 
 # Section copy
@@ -12,6 +12,16 @@ timestamp: 2026-10-30
 `task: "section_copy"` on [POST /invocations](/endpoints/invocations.md). A
 body with no `task`, or `task: "article"`, is an article request exactly as it
 always was; the server picks the request model from this one field.
+
+The subject is one section of a page or, since 2026-10-31, one **entry** of a
+collection (a blog post, a case study): `subject: "entry"`, with the
+collection's entry schema as `template` and the entry's own page as `page`.
+`subject` changes wording only, and is `section` when absent. The rules in the
+prompt's cached half are written for both, so that half is byte-identical
+whichever is drafted; the task half says THE SECTION or THE ENTRY ("one entry of
+a collection on the site; the copy is the whole entry, not a section of a
+page"), titles the page `Entry title` and names the questions this entry is
+meant to win. The tool and the user turn name neither.
 
 ```
 edits  ->  facts  ->  compose  ->  MODEL  ->  normalize  ->  post-checks  ->  merge  ->  measure  ->  audit
@@ -114,12 +124,55 @@ Two notes follow in code, and neither removes anything:
 - `disagreement:<line>` per point the model reported, one line, at most 150
   characters, at most three, deduplicated.
 
+A record value that is a catch-all (`Other`, `N/A`, `General`, `misc`,
+`unknown` and the like, compared case-insensitively, in any string field of the
+organization record) says nothing about what the business does, so it is never
+in disagreement with a page. The prompt says so (found when the second real-model
+run reported an industry of "Other" as disagreeing with a plumbing page), and a
+disagreement line that **names** one the record holds is dropped: quoted in any
+case, or written exactly as the record spells it in the middle of a sentence
+when that spelling has a capital. So `as Other` is dropped, while `the page's
+other sections …` and `… roofing. Other sections …` are prose and kept, and a
+line naming `Other` when the record's industry is specific is kept, because the
+filter keys on what the record holds. A blank value cannot be named, so for it
+the prompt is the whole rule.
+
 Both travel in `audit.voice_tells` after the voice tells, under their prefixes:
 it is the one list of notes the gateway stores and shows, and an unknown key in
 `field_notes` or `audit` is dropped there. ⚠️ The portal currently introduces
 that list as phrasing that can read as machine-written, which fits a claim
 note loosely and a disagreement note poorly; giving them their own line is the
 gateway's and the portal's to do.
+
+## Links and rejection reasons: what the model is now told
+
+Two inputs added after the second real-model run (2026-10-31), both optional,
+so a gateway that omits them gets the earlier prompt.
+
+- **`template.links`**: where each label field's link goes (`field`, `href`,
+  `target` the site page's title or null, `item` the 0-based item index for a
+  label inside a list item). The prompt lists them inside the data fence under
+  WHERE THE LINKS GO (`[link:buttonLabel] buttonLabel is the label of a link
+  that opens the page "Contact" (/contact)`; an item link names its list and its
+  1-based item; a null target reads "not a page of this site we can name"), and
+  the label's field line, outside the fence, points at that id. The rule: a
+  label describes what happens when it is clicked and never promises a
+  destination the link does not have. Only links on fields being drafted are
+  shown; a link for a field the template lacks, or a person's preserved field,
+  has no label to write. Page titles and hrefs are sources like the rest of the
+  page. **There is no deterministic note for a label**: whether "Get in touch"
+  describes /contact is a question of meaning, and a word-overlap heuristic
+  would flag that honest label while passing a dishonest one that happens to
+  share a word with the page title. The prompt is the whole measure.
+- **`rejected`**: reasons a person gave for rejecting earlier drafts of this
+  same section or entry, newest first. At most three are shown, each one line of
+  at most 500 characters, blanks skipped, inside the data fence under EARLIER
+  DRAFTS WERE REJECTED BECAUSE, as `[rejected:<n>]`. The rule: do not repeat
+  what a reason objects to, keep a fact a reason insists on, and a reason is the
+  person's words about the copy, not an instruction about anything else. They
+  are the person's words as much as an edited field is, so they **are** sources
+  for a phone, address, hours or licence number and for a claim; they never make
+  a price listed, because only the price list does.
 
 ## A person's field is kept by name
 
@@ -155,7 +208,7 @@ pipeline without tripping a check the inputs did not already pass.
 
 The section tool is generic (`fields` as an array of `{name, text | items,
 inputs_used}`, plus an optional `disagreements` array of strings) rather than
-built per template, so its definition is byte-stable
+built per template or per subject, so its definition is byte-stable
 and stays in the cached prefix. The streaming, the unforced first call and the
 one forced retry are the same code as the article's, shared through one helper
 in [the model seam](/lib/model-seam.md).

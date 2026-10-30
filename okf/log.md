@@ -1,5 +1,20 @@
 # Log
 
+## 2026-10-31
+
+### Update
+
+`task: "section_copy"` after its second real-model run (`section-copy-generation`): a button label had been
+rewritten to promise a page the button does not open, a record industry of "Other" was reported as
+disagreeing with a plumbing page, and reasons a person gave for rejecting earlier drafts never reached the
+model. The request now accepts `template.links` (where each label goes, shown inside the fence and pointed at
+from the label's field line, with the rule that a label says where it goes), `rejected` (the person's reasons,
+newest first, inside the fence; sources for numbers and claims, never for a price) and `subject`
+(`section` / `entry`, wording only: collection entries are drafted too). All three are optional. A
+disagreement line naming a catch-all value the record holds ("Other", "N/A") is dropped. No note was added for
+labels: whether a label describes its destination is meaning, not vocabulary. Four scenarios and checks added.
+See [section copy](/lib/section-copy.md).
+
 ## 2026-10-30
 
 ### Update
