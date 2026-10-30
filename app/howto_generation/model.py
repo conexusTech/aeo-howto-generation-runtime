@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 from app.howto_generation.contracts import Section, TokenUsage
 from app.howto_generation.prompt import PromptComposition
+from app.howto_generation.section_prompt import SectionCopyPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,20 @@ class GeneratedArticle(BaseModel):
     usage: TokenUsage | None = None
 
 
+class DraftedSectionCopy(BaseModel):
+    """One section's copy as the model produced it, before any of our checks.
+
+    `fields` is the tool's raw array — `{name, text?, items?, inputs_used?}` per
+    entry. Nothing in it is trusted: `section_copy.normalize` allowlists every
+    name, kind and item key against the template.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    fields: list[dict[str, Any]] = Field(default_factory=list)
+    usage: TokenUsage | None = None
+
+
 class ChatModel(ABC):
     """Injectable model. Synchronous, matching the deterministic pipeline; the
     server dispatches it off the event loop."""
@@ -48,15 +63,33 @@ class ChatModel(ABC):
     @abstractmethod
     def generate(self, *, prompt: PromptComposition) -> GeneratedArticle: ...
 
+    def draft_section_copy(self, *, prompt: SectionCopyPrompt) -> DraftedSectionCopy:
+        """Draft one site section. Not abstract, so a test double written for
+        articles alone still constructs; it answers a section request with a
+        failure the server reports as `GENERATION_FAILED`."""
+        raise NotImplementedError(f"{type(self).__name__} does not draft section copy")
+
 
 class FakeChatModel(ChatModel):
     """Test double. Returns a scripted article, or a deterministic default."""
 
-    def __init__(self, article: GeneratedArticle | None = None) -> None:
+    def __init__(
+        self,
+        article: GeneratedArticle | None = None,
+        section_copy: DraftedSectionCopy | None = None,
+    ) -> None:
         self._article = article
+        self._section_copy = section_copy
         #: Every prompt it was called with, so tests can assert on what the
         #: model was actually told rather than only on what came back.
         self.calls: list[PromptComposition] = []
+        self.section_calls: list[SectionCopyPrompt] = []
+
+    def draft_section_copy(self, *, prompt: SectionCopyPrompt) -> DraftedSectionCopy:
+        self.section_calls.append(prompt)
+        if self._section_copy is not None:
+            return self._section_copy
+        return stub_section_copy(prompt)
 
     def generate(self, *, prompt: PromptComposition) -> GeneratedArticle:
         self.calls.append(prompt)
@@ -134,6 +167,61 @@ def _mirror_template(section_types: tuple[str, ...]) -> GeneratedArticle:
     return GeneratedArticle(
         title="Stub article (canned — no model was called)", sections=sections
     )
+
+
+_STUB_PLACEHOLDER = "Placeholder copy from the stub model. No language model was called."
+
+_HEADLINE_HINTS = ("headline", "heading", "title", "question", "name")
+
+
+def _clip(text: str, limit: int | None) -> str:
+    return text if limit is None or len(text) <= limit else text[:limit].rstrip()
+
+
+def stub_section_copy(prompt: SectionCopyPrompt) -> DraftedSectionCopy:
+    """Deterministic section copy built from the inputs, for local runs.
+
+    A headline-like field (its name contains headline, heading, title, question
+    or name) gets the first question's text, or the page title when there is no
+    question; every other text field gets an obviously canned sentence. A list
+    gets one item per question (at most three; one item when there are none),
+    filled the same way. Every value is clipped to its limit, so the stub never
+    trips the length check, and it writes no digits of its own, so it never
+    trips a post-check the inputs did not already pass. Same prompt, same draft.
+    """
+    questions = list(prompt.questions)
+
+    def value(name: str, limit: int | None, question: tuple[str, str] | None) -> str:
+        if any(hint in name.lower() for hint in _HEADLINE_HINTS):
+            source = question[1] if question else prompt.page_title
+            return _clip(source or _STUB_PLACEHOLDER, limit)
+        return _clip(_STUB_PLACEHOLDER, limit)
+
+    first = questions[0] if questions else None
+    fields: list[dict[str, Any]] = []
+    for spec in prompt.fields_to_draft:
+        if spec.kind == "list":
+            sources: list[tuple[str, str] | None] = list(questions[:3]) or [None]
+            items = [
+                {
+                    item.name: value(item.name, item.max_length, source)
+                    for item in spec.item_fields
+                }
+                for source in sources
+            ]
+            used = [f"question:{q[0]}" for q in questions[:3]]
+            fields.append({"name": spec.name, "items": items, "inputs_used": used})
+        else:
+            text = value(spec.name, spec.max_length, first)
+            headline = any(h in spec.name.lower() for h in _HEADLINE_HINTS)
+            if headline and first is not None:
+                used = [f"question:{first[0]}"]
+            elif headline:
+                used = ["page.title"]
+            else:
+                used = []
+            fields.append({"name": spec.name, "text": text, "inputs_used": used})
+    return DraftedSectionCopy(fields=fields)
 
 
 #: The four section types, in READING order — which is also the order the tool
@@ -225,6 +313,57 @@ _ARTICLE_TOOL: dict[str, Any] = {
 }
 
 
+#: The section-copy envelope. Generic rather than built per template, so the
+#: tool definition is byte-stable and sits in the cached prefix. The schema is a
+#: HINT (Mantle refuses `strict: true`); `section_copy.normalize` allowlists
+#: every name and item key, and that is what actually holds.
+_SECTION_COPY_TOOL: dict[str, Any] = {
+    "name": "emit_section_copy",
+    "description": (
+        "Emit the section's copy. Call this exactly once; it is the only way "
+        "your work is delivered. One entry per field, by its exact name."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "fields": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "text": {
+                            "type": "string",
+                            "description": "For a text or rich text field.",
+                        },
+                        "items": {
+                            "type": "array",
+                            "description": (
+                                "For a list field: one object per item, keyed "
+                                "by the item field names, string values."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": {"type": "string"},
+                            },
+                        },
+                        "inputs_used": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Input ids this field draws on.",
+                        },
+                    },
+                    "required": ["name", "inputs_used"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["fields"],
+        "additionalProperties": False,
+    },
+}
+
+
 
 class BedrockChatModel(ChatModel):
     """Claude on Amazon Bedrock via the Mantle client.
@@ -246,14 +385,52 @@ class BedrockChatModel(ChatModel):
 
     def generate(self, *, prompt: PromptComposition) -> GeneratedArticle:
         stable, volatile = prompt.split()
+        data, usage = self._stream_tool_call(
+            stable=stable,
+            volatile=volatile,
+            user_text="Write the article now.",
+            tool=_ARTICLE_TOOL,
+            label="article",
+        )
+        article = parse_article(data)
+        article.usage = usage
+        return article
+
+    def draft_section_copy(self, *, prompt: SectionCopyPrompt) -> DraftedSectionCopy:
+        stable, volatile = prompt.split()
+        data, usage = self._stream_tool_call(
+            stable=stable,
+            volatile=volatile,
+            user_text="Write the section's copy now.",
+            tool=_SECTION_COPY_TOOL,
+            label="section copy",
+        )
+        raw = data.get("fields")
+        # A non-list is dropped to an empty draft rather than raised: unlike an
+        # article, an empty section draft is not a silent success — every
+        # field then comes back in `refused` as not drafted.
+        fields = [f for f in raw if isinstance(f, dict)] if isinstance(raw, list) else []
+        return DraftedSectionCopy(fields=fields, usage=usage)
+
+    def _stream_tool_call(
+        self,
+        *,
+        stable: str,
+        volatile: str,
+        user_text: str,
+        tool: dict[str, Any],
+        label: str,
+    ) -> tuple[dict[str, Any], TokenUsage]:
+        """One structured answer through `tool`: the input it was called with,
+        and the usage of every call made to get it. Shared by both tasks, so
+        the streaming, the unforced first call and the one forced retry are
+        the same code for an article and for section copy."""
         system: list[TextBlockParam] = [
-            # The cache breakpoint. Byte-stable across every article for one org.
+            # The cache breakpoint. Byte-stable across every request for one org.
             {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": volatile},
         ]
-        messages: list[MessageParam] = [
-            {"role": "user", "content": "Write the article now."}
-        ]
+        messages: list[MessageParam] = [{"role": "user", "content": user_text}]
 
         # 🔴 STREAMED, not `messages.create`, and this is not a preference.
         #
@@ -281,7 +458,7 @@ class BedrockChatModel(ChatModel):
             thinking={"type": "adaptive"},
             system=system,
             messages=messages,
-            tools=[_ARTICLE_TOOL],
+            tools=[tool],
             # DELIBERATELY NOT `tool_choice`. Measured on the sibling runtime
             # against the live Mantle endpoint: forcing the tool SUPPRESSES the
             # thinking block, and the model then reasons inside the argument
@@ -291,7 +468,8 @@ class BedrockChatModel(ChatModel):
             response = stream.get_final_message()
         usage = _usage_from_response(response)
         logger.info(
-            "generate: stop_reason=%s blocks=%s output_tokens=%s max_tokens=%s",
+            "%s: stop_reason=%s blocks=%s output_tokens=%s max_tokens=%s",
+            label,
             response.stop_reason,
             [b.type for b in response.content],
             getattr(response.usage, "output_tokens", None),
@@ -299,9 +477,10 @@ class BedrockChatModel(ChatModel):
         )
         if response.stop_reason == "max_tokens":
             logger.warning(
-                "model hit max_tokens (%s) — thinking and the article share this "
-                "budget, so the article may be truncated or absent",
+                "model hit max_tokens (%s) — thinking and the answer share this "
+                "budget, so the %s may be truncated or absent",
                 self._max_tokens,
+                label,
             )
 
         tool_use = next((b for b in response.content if b.type == "tool_use"), None)
@@ -325,8 +504,8 @@ class BedrockChatModel(ChatModel):
                 thinking={"type": "adaptive"},
                 system=system,
                 messages=messages,
-                tools=[_ARTICLE_TOOL],
-                tool_choice={"type": "tool", "name": _ARTICLE_TOOL["name"]},
+                tools=[tool],
+                tool_choice={"type": "tool", "name": tool["name"]},
             ) as stream:
                 response = stream.get_final_message()
             # Summed, not replaced: the first call's tokens were really spent,
@@ -339,7 +518,7 @@ class BedrockChatModel(ChatModel):
 
         if tool_use is None:
             raise RuntimeError(
-                "model produced no article: stop_reason="
+                f"model produced no {label}: stop_reason="
                 f"{response.stop_reason!r}, blocks="
                 f"{[b.type for b in response.content]}, "
                 f"max_tokens={self._max_tokens}"
@@ -351,9 +530,7 @@ class BedrockChatModel(ChatModel):
                 )
             )
 
-        article = parse_article(dict(tool_use.input))
-        article.usage = usage
-        return article
+        return dict(tool_use.input), usage
 
 
 def parse_article(data: dict[str, Any]) -> GeneratedArticle:

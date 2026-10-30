@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SectionType = Literal["intro", "step", "tip", "outro"]
 
@@ -90,9 +90,18 @@ class CorpusArticle(BaseModel):
     body: str
 
 
+#: The two jobs `POST /invocations` does. `article` is the default so every
+#: request written before `section_copy` existed means exactly what it meant.
+Task = Literal["article", "section_copy"]
+
+
 class GenerationRequest(BaseModel):
     model_config = _INBOUND
 
+    #: Only ever `article` here. A `section_copy` body is parsed as a
+    #: `SectionCopyRequest` instead (the server dispatches on this field), so
+    #: an article request can never be mistaken for one and vice versa.
+    task: Literal["article"] = "article"
     operation: Literal["generate", "regenerate"] = "generate"
     template: Template
     #: The gateway's runtime-context payload, passed through verbatim. Read
@@ -244,3 +253,219 @@ class ErrorResponse(BaseModel):
 
     error_code: str
     message: str
+
+
+# ===========================================================================
+# task: "section_copy" — Meriwether Sites C4 (`section-copy-generation`)
+#
+# Copy for ONE section of an organization's own site, written for the
+# questions that section is meant to win, from facts the record holds. The
+# same rules as an article — facts only, prices only from the price list, a
+# person's edits kept — but per FIELD rather than per article section, and the
+# fact rules are re-checked in code after the model answers (`section_checks`).
+# ===========================================================================
+
+#: A text field is one string; `rich_text` is one string of markup the site
+#: renders; a `list` is repeated items, each with its own named text fields.
+SectionFieldKind = Literal["text", "rich_text", "list"]
+QuestionVerdict = Literal["lost", "missing", "earned", "unmeasured"]
+
+
+class SectionItemField(BaseModel):
+    """One field inside every item of a `list` field. Items do not nest."""
+
+    model_config = _INBOUND
+
+    name: str
+    max_length: int | None = Field(default=None, ge=1)
+    kind: Literal["text", "rich_text"] = "text"
+    required: bool = False
+
+
+class SectionTemplateField(BaseModel):
+    """One field of the site template's section, flattened by the gateway
+    from the template's JSON Schema."""
+
+    model_config = _INBOUND
+
+    name: str
+    max_length: int | None = Field(default=None, ge=1)
+    kind: SectionFieldKind = "text"
+    #: Only meaningful when `kind` is `list`.
+    item_fields: list[SectionItemField] = Field(default_factory=list)
+    required: bool = False
+
+
+class SectionTemplate(BaseModel):
+    model_config = _INBOUND
+
+    key: str
+    name: str
+    fields: list[SectionTemplateField] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _field_names_are_unique(self) -> SectionTemplate:
+        # Fields are matched BY NAME everywhere downstream — the edit check, the
+        # model's answer, the refusals — so two fields sharing a name would make
+        # one of them unaddressable, and which one is an accident of ordering.
+        names = [f.name for f in self.fields]
+        if len(names) != len(set(names)):
+            raise ValueError("template field names must be unique")
+        for field in self.fields:
+            if field.kind == "list" and not field.item_fields:
+                raise ValueError(
+                    f"list field {field.name!r} declares no item_fields"
+                )
+            item_names = [i.name for i in field.item_fields]
+            if len(item_names) != len(set(item_names)):
+                raise ValueError(
+                    f"item field names of {field.name!r} must be unique"
+                )
+        return self
+
+
+class SectionPage(BaseModel):
+    model_config = _INBOUND
+
+    title: str
+    page_type: str
+    #: The page's address on the site, e.g. `/services/drain-cleaning`.
+    address: str | None = None
+    #: The live text of the page's OTHER sections, so the draft does not repeat
+    #: them. Written by a person or an earlier accepted draft.
+    other_sections_text: list[str] = Field(default_factory=list)
+
+
+class TargetQuestion(BaseModel):
+    """One question the section is meant to win, from Share of Voice."""
+
+    model_config = _INBOUND
+
+    #: The durable question id (`prompt_source_id` in the gateway).
+    id: str
+    text: str
+    verdict: QuestionVerdict = "unmeasured"
+    competitors: list[str] = Field(default_factory=list)
+    top_cited_host: str | None = None
+
+
+class PriceEntry(BaseModel):
+    model_config = _INBOUND
+
+    item: str
+    price: str
+
+
+class PricePolicy(BaseModel):
+    """Whether this site allows prices in drafts, and the only ones it may use.
+
+    Off unless the gateway says otherwise: a request that forgets the field
+    gets the safe answer.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    allowed: bool = False
+    #: Wire name `list`; `items` in Python so it does not shadow the builtin.
+    items: list[PriceEntry] = Field(default_factory=list, alias="list")
+
+
+class SectionCorpusDraft(BaseModel):
+    """Another organization's draft from the same site template (similarity).
+
+    Cross-tenant by design, like `CorpusArticle`: text only, no name, no host.
+    """
+
+    model_config = _INBOUND
+
+    draft_id: str
+    organization_id: str
+    text: str
+
+
+class SectionCopyRequest(BaseModel):
+    model_config = _INBOUND
+
+    task: Literal["section_copy"]
+    template: SectionTemplate
+    page: SectionPage
+    questions: list[TargetQuestion] = Field(default_factory=list)
+    #: The gateway's runtime-context payload, verbatim, as for articles.
+    context: dict[str, Any] = Field(default_factory=dict)
+    prices: PricePolicy = Field(default_factory=PricePolicy)
+
+    #: The section's live fields, a person's edits included. None on a first draft.
+    current_fields: dict[str, Any] | None = None
+    #: What drafting last produced for this section, before any person touched
+    #: it. Required whenever `current_fields` is sent, for the reason
+    #: `regenerate.py` gives: without it an edit and a draft are the same bytes.
+    generated_baseline: dict[str, Any] | None = None
+    edit_policy: Literal["preserve", "discard"] = "preserve"
+
+    corpus: list[SectionCorpusDraft] = Field(default_factory=list)
+
+
+class FieldNote(BaseModel):
+    model_config = _OUTBOUND
+
+    #: Input ids the draft of this field drew on, as offered in the prompt —
+    #: `question:<id>`, `price:<n>`, a fact name, `page.title`. Ids the model
+    #: named that were never offered are dropped, not echoed.
+    inputs_used: list[str] = Field(default_factory=list)
+
+
+class SectionSimilarity(BaseModel):
+    """`SimilarityMeasurement`, named for drafts. Recorded only, never enforced.
+
+    `compared_count == 0` means UNMEASURED and `score` is then meaningless.
+    """
+
+    model_config = _OUTBOUND
+
+    score: float
+    nearest_draft_id: str | None
+    nearest_organization_id: str | None
+    compared_count: int
+    duration_ms: int
+
+
+class SectionCopyAudit(BaseModel):
+    """`AuditRecord`'s fields, with the site template and the questions in
+    place of the article template's service key and vertical."""
+
+    model_config = _OUTBOUND
+
+    template_key: str
+    template_name: str
+    question_ids: list[str] = Field(default_factory=list)
+    context_version: str | None
+    organization_id: str | None
+    model_id: str
+    build_version: str | None = None
+    inputs_used: list[str] = Field(default_factory=list)
+    #: Over the copy THIS run drafted (not a person's preserved words).
+    #: Measured, never enforced — see `AuditRecord.voice_tells`.
+    voice_tells: list[str] = Field(default_factory=list)
+
+
+class SectionCopyResponse(BaseModel):
+    model_config = _OUTBOUND
+
+    task: Literal["section_copy"] = "section_copy"
+    #: Field name -> a string (`text`, `rich_text`) or a list of items, each a
+    #: name -> string mapping (`list`). A field absent here was not drafted:
+    #: it is in `refused` with the reason.
+    fields: dict[str, Any] = Field(default_factory=dict)
+    field_notes: dict[str, FieldNote] = Field(default_factory=dict)
+    #: Field name -> why no draft is returned for it. A field the model drafted
+    #: and a post-check removed lands here, as does one it never drafted.
+    refused: dict[str, str] = Field(default_factory=dict)
+    #: Fields a person edited, returned word for word (`preserve`).
+    preserved_fields: list[str] = Field(default_factory=list)
+    #: Fields a person edited that this run replaced (`discard`). Stated so the
+    #: overwrite is never silent.
+    discarded_fields: list[str] = Field(default_factory=list)
+    edit_policy: Literal["preserve", "discard"]
+    similarity: SectionSimilarity
+    audit: SectionCopyAudit
+    usage: TokenUsage = Field(default_factory=TokenUsage)

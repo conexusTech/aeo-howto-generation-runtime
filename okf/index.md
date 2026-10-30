@@ -23,7 +23,7 @@ Open Knowledge Format bundle for this repo. Start at [service.md](/service.md).
 
 - [service.md](/service.md) — the repo as a concept; agent entry point
 - [endpoints/](/endpoints/invocations.md) — the two HTTP surfaces
-- [lib/](/lib/slot-resolution.md) — slot resolution, similarity, regeneration, the prompt, the model seam
+- [lib/](/lib/slot-resolution.md) — slot resolution, similarity, regeneration, the prompt, the model seam, [section copy](/lib/section-copy.md)
 - [business/](/business/emit-only.md) — domain concepts this repo owns
 - [integrations/](/integrations/bedrock-claude.md) — outward calls
 - [playbooks/](/playbooks/run-locally.md) — operational runbooks

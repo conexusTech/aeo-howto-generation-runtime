@@ -9,6 +9,11 @@ timestamp: 2026-09-03
 
 # POST /invocations
 
+Two tasks. `task` absent or `"article"`: one article, generated or regenerated,
+described below. `task: "section_copy"`: copy for one section of an
+organization's site; its request, response and rules are in
+[section copy](/lib/section-copy.md).
+
 One article, generated or regenerated. Called by the gateway,
 [aeo-backend](aeo-backend:/service.md), which assembles the request from the
 template library and the org runtime-context endpoint.
@@ -46,11 +51,28 @@ it should surface to an operator and a fault it should retry survives the trip.
 
 | `error_code` | Means |
 |---|---|
-| `INVALID_REQUEST` | The body did not parse or failed validation. Detail is echoed — it describes the caller's own payload |
+| `INVALID_REQUEST` | The body did not parse, named an unknown `task`, or failed validation. Detail is echoed — it describes the caller's own payload |
 | `EMPTY_ARTICLE` | The model produced no usable sections. Retrying is the gateway's decision |
-| `BASELINE_REQUIRED` | A regeneration arrived without `generated_baseline` |
+| `BASELINE_REQUIRED` | A regeneration, or a section draft with `current_fields`, arrived without `generated_baseline` |
 | `INVALID_EDIT_POLICY` | `edit_policy` was neither `preserve` nor `discard` |
 | `GENERATION_FAILED` | Anything unexpected. **The message is deliberately uninformative** — the gateway relays this body onward and a failure can carry fragments of tenant-authored context. The traceback stays in the runtime logs |
 
 A success carries `title`, `sections`, `slots`, `similarity`, `regeneration`
 (regeneration only), `audit` and `usage`.
+
+## Section copy, in brief
+
+Request: `task`, `template` (`key`, `name`, `fields[]` of `name`, `max_length`,
+`kind` text / rich_text / list, `item_fields[]`, `required`), `page` (`title`,
+`page_type`, `address`, `other_sections_text[]`), `questions[]` (`id`, `text`,
+`verdict` lost / missing / earned / unmeasured, `competitors[]`,
+`top_cited_host`), `context`, `prices` (`allowed`, `list[]` of `item`, `price`;
+off when absent), `current_fields`, `generated_baseline`, `edit_policy`,
+`corpus[]` (`draft_id`, `organization_id`, `text`).
+
+Response: `task`, `fields`, `field_notes` (`inputs_used` per field), `refused`
+(field to reason), `preserved_fields`, `discarded_fields`, `edit_policy`,
+`similarity` (`score`, `nearest_draft_id`, `nearest_organization_id`,
+`compared_count`, `duration_ms`), `audit` (`template_key`, `template_name`,
+`question_ids`, `context_version`, `organization_id`, `model_id`,
+`build_version`, `inputs_used`, `voice_tells`) and `usage`.

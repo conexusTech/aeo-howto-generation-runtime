@@ -21,8 +21,12 @@ from pydantic import ValidationError
 
 from app.config import get_settings
 from app.howto_generation import model as model_module
-from app.howto_generation import runtime
-from app.howto_generation.contracts import ErrorResponse, GenerationRequest
+from app.howto_generation import runtime, section_copy
+from app.howto_generation.contracts import (
+    ErrorResponse,
+    GenerationRequest,
+    SectionCopyRequest,
+)
 from app.howto_generation.model import ChatModel
 
 SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
@@ -45,7 +49,8 @@ def get_chat_model() -> ChatModel:
             # failure this guards against is somebody reviewing a stub article
             # and approving it.
             logger.warning(
-                "HOWTO_GENERATION_USE_STUB_MODEL is ON — articles are CANNED, "
+                "HOWTO_GENERATION_USE_STUB_MODEL is ON — articles and section "
+                "copy are CANNED, "
                 "no model is being called. This must never be set outside a "
                 "local run."
             )
@@ -104,7 +109,8 @@ async def invocations(
     request: Request,
     model: ChatModel = Depends(get_chat_model),
 ) -> JSONResponse:
-    """Generate or regenerate one article.
+    """Generate or regenerate one article, or (`task: "section_copy"`) draft
+    one site section's copy.
 
     🔴 **Every outcome is HTTP 200 with a typed body.** AgentCore reports a
     non-2xx as an invocation failure and the body is frequently discarded on the
@@ -119,7 +125,18 @@ async def invocations(
         payload = await request.json()
         if not isinstance(payload, dict):
             raise ValueError("body must be a JSON object")
-        parsed = GenerationRequest.model_validate(payload)
+        # `task` picks the request model. Absent means `article`, so every body
+        # written before `section_copy` existed parses exactly as it did.
+        task = payload.get("task", "article")
+        if task not in ("article", "section_copy"):
+            raise ValueError(
+                f"task must be 'article' or 'section_copy', got {task!r}"
+            )
+        parsed: GenerationRequest | SectionCopyRequest = (
+            SectionCopyRequest.model_validate(payload)
+            if task == "section_copy"
+            else GenerationRequest.model_validate(payload)
+        )
     except ValidationError as exc:
         # Echoing detail is safe here: it describes the CALLER's own body, not
         # our infrastructure. Truncated so a pathological error tree cannot
@@ -146,9 +163,14 @@ async def invocations(
         # the event loop stalls every other request on this runtime — including
         # `GET /ping`, whose probe timeout would get the container recycled
         # mid-generation.
-        result = await run_in_threadpool(
-            runtime.handle, parsed, model=model, settings=settings
-        )
+        if isinstance(parsed, SectionCopyRequest):
+            result = await run_in_threadpool(
+                section_copy.handle, parsed, model=model, settings=settings
+            )
+        else:
+            result = await run_in_threadpool(
+                runtime.handle, parsed, model=model, settings=settings
+            )
     except Exception:  # noqa: BLE001 — surfaced as a typed body, never a 500
         # Logged with the traceback, answered without one. The caller gets a
         # code it can branch on; the stack trace stays in CloudWatch, because a

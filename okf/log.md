@@ -1,5 +1,28 @@
 # Log
 
+## 2026-10-30
+
+### Update
+
+`task: "section_copy"` on `POST /invocations` (Meriwether Sites C4,
+`section-copy-generation`, T-1): copy for one site section, written for its
+target questions from the record's facts. Prices, phone, licence, address and
+hours numbers are re-checked in code after the model answers and the field is
+refused whole when one is not in the inputs or (prices) not allowed or not on
+the price list; a person's edited fields are kept word for word by name, a list
+as a whole; voice tells and similarity are measured, never enforced; the stub
+drafts deterministically from the inputs. Requests without `task` are articles,
+unchanged. See [section copy](/lib/section-copy.md).
+
+### Learning — a 7-digit local number sourced an invented area code
+
+The first cut of the phone rule accepted a draft number when one digit string
+ended with the other, to allow for a country code. A test written to prove the
+inputs are scanned one at a time failed for a different reason: `123 4567` in
+the record sourced `555 123 4567` in a draft, so the model could add an area
+code nobody gave it and pass. The rule now allows at most three extra leading
+digits and only against a full national number of ten or more.
+
 ## 2026-10-21
 
 ### Learning — a stub of fixed shape cannot pass a check derived from the template

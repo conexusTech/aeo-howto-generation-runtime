@@ -65,5 +65,6 @@ control on publication in V1.
 - The refusals: [lib/slot-resolution](/lib/slot-resolution.md)
 - The metric, and why it is lexical: [lib/similarity](/lib/similarity.md)
 - Preserving human edits: [lib/regeneration](/lib/regeneration.md)
+- The second task, copy for one site section: [lib/section-copy](/lib/section-copy.md)
 - What must be true: [capabilities/](/capabilities/howto-article-generation.md), proven by [qa/](/qa/howto-article-generation.md)
 - Run it on this machine: [playbooks/run-locally](/playbooks/run-locally.md)
