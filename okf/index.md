@@ -28,8 +28,8 @@ Open Knowledge Format bundle for this repo. Start at [service.md](/service.md).
 - [integrations/](/integrations/bedrock-claude.md) — outward calls
 - [playbooks/](/playbooks/run-locally.md) — operational runbooks
 - [briefs/](/briefs/index.md) — product ⇄ design, before the code
-- [capabilities/](/capabilities/howto-article-generation.md) — what the system does, as scenarios. No status
-- [qa/](/qa/howto-article-generation.md) — one checklist per capability; every requirement has a check
+- [capabilities/](/capabilities/howto-article-generation.md) — what the system does, as scenarios. No status; [section copy generation](/capabilities/section-copy-generation.md) is the second
+- [qa/](/qa/howto-article-generation.md) — one checklist per capability; every requirement has a check; [section copy generation](/qa/section-copy-generation.md)
 - [log.md](/log.md) — change history
 
 Reserved: `index.md` and `log.md` are never concept documents.

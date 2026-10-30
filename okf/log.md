@@ -4,6 +4,13 @@
 
 ### Update
 
+The requirements for `task: "section_copy"` are written down (Meriwether Sites C4, documentation only):
+`capabilities/section-copy-generation` (12 scenarios) with `qa/section-copy-generation`, every check
+automated in `tests/test_section_copy.py` or `tests/test_section_checks.py` against a fake model. Nothing in
+them has met a real model. Concept linked from the index: [section copy](/lib/section-copy.md).
+
+### Update
+
 `task: "section_copy"` on `POST /invocations` (Meriwether Sites C4,
 `section-copy-generation`, T-1): copy for one site section, written for its
 target questions from the record's facts. Prices, phone, licence, address and
