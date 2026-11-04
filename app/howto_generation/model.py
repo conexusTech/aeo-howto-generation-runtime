@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from collections.abc import Sequence
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -25,9 +26,9 @@ from pydantic import BaseModel, ConfigDict, Field
 if TYPE_CHECKING:
     from anthropic.types import MessageParam, TextBlockParam
 
-from app.howto_generation.contracts import Section, TokenUsage
+from app.howto_generation.contracts import Section, SectionItemField, TokenUsage
 from app.howto_generation.prompt import PromptComposition
-from app.howto_generation.section_prompt import SectionCopyPrompt
+from app.howto_generation.section_prompt import BrandFact, SectionCopyPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +183,10 @@ def _clip(text: str, limit: int | None) -> str:
     return text if limit is None or len(text) <= limit else text[:limit].rstrip()
 
 
+def _brand_key(name: str) -> str:
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
 def stub_section_copy(prompt: SectionCopyPrompt) -> DraftedSectionCopy:
     """Deterministic section copy built from the inputs, for local runs.
 
@@ -189,11 +194,18 @@ def stub_section_copy(prompt: SectionCopyPrompt) -> DraftedSectionCopy:
     or name) gets the first question's text, or the page title when there is no
     question; every other text field gets an obviously canned sentence. A list
     gets one item per question (at most three; one item when there are none),
-    filled the same way. Every value is clipped to its limit, so the stub never
-    trips the length check, and it writes no digits of its own, so it never
-    trips a post-check the inputs did not already pass. Same prompt, same draft.
+    filled the same way; a list inside an item gets one item per question too
+    (at most two). A `brand` field is the brand fact whose key matches its name
+    (case and punctuation ignored), citing it; with no matching fact it is left
+    out, as the prompt tells a model to do. Every value is clipped to its limit,
+    so the stub never trips the length check, and it writes no digits of its
+    own, so it never trips a post-check the inputs did not already pass. Same
+    prompt, same draft.
     """
     questions = list(prompt.questions)
+    brand_facts: dict[str, BrandFact] = {}
+    for fact in prompt.brand_facts:
+        brand_facts.setdefault(_brand_key(fact.name), fact)
 
     def value(name: str, limit: int | None, question: tuple[str, str] | None) -> str:
         if any(hint in name.lower() for hint in _HEADLINE_HINTS):
@@ -201,20 +213,58 @@ def stub_section_copy(prompt: SectionCopyPrompt) -> DraftedSectionCopy:
             return _clip(source or _STUB_PLACEHOLDER, limit)
         return _clip(_STUB_PLACEHOLDER, limit)
 
+    def brand_value(name: str, limit: int | None, cited: set[str]) -> str | None:
+        fact = brand_facts.get(_brand_key(name))
+        if fact is None:
+            return None
+        cited.add(fact.id)
+        return _clip(fact.value, limit)
+
+    def items_for(
+        item_specs: Sequence[SectionItemField],
+        sources: Sequence[tuple[str, str] | None],
+        brand: bool,
+        cited: set[str],
+    ) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for source in sources:
+            item: dict[str, Any] = {}
+            for item_spec in item_specs:
+                item_brand = brand or item_spec.source == "brand"
+                if item_spec.kind == "list":
+                    nested = items_for(
+                        item_spec.item_fields,
+                        list(questions[:2]) or [None],
+                        item_brand,
+                        cited,
+                    )
+                    if nested:
+                        item[item_spec.name] = nested
+                elif item_brand:
+                    text = brand_value(item_spec.name, item_spec.max_length, cited)
+                    if text is not None:
+                        item[item_spec.name] = text
+                else:
+                    item[item_spec.name] = value(item_spec.name, item_spec.max_length, source)
+            if item:
+                items.append(item)
+        return items
+
     first = questions[0] if questions else None
     fields: list[dict[str, Any]] = []
     for spec in prompt.fields_to_draft:
+        cited: set[str] = set()
         if spec.kind == "list":
             sources: list[tuple[str, str] | None] = list(questions[:3]) or [None]
-            items = [
-                {
-                    item.name: value(item.name, item.max_length, source)
-                    for item in spec.item_fields
-                }
-                for source in sources
-            ]
-            used = [f"question:{q[0]}" for q in questions[:3]]
+            items = items_for(spec.item_fields, sources, spec.source == "brand", cited)
+            if not items:
+                continue
+            used = [f"question:{q[0]}" for q in questions[:3]] + sorted(cited)
             fields.append({"name": spec.name, "items": items, "inputs_used": used})
+        elif spec.source == "brand":
+            text = brand_value(spec.name, spec.max_length, cited)
+            if text is not None:
+                fields.append({"name": spec.name, "text": text, "inputs_used": sorted(cited)})
         else:
             text = value(spec.name, spec.max_length, first)
             headline = any(h in spec.name.lower() for h in _HEADLINE_HINTS)
@@ -345,11 +395,31 @@ _SECTION_COPY_TOOL: dict[str, Any] = {
                             "type": "array",
                             "description": (
                                 "For a list field: one object per item, keyed "
-                                "by the item field names, string values."
+                                "by the item field names. A value is a string, "
+                                "or an array of objects for a list inside the "
+                                "item."
                             ),
                             "items": {
                                 "type": "object",
-                                "additionalProperties": {"type": "string"},
+                                "additionalProperties": {
+                                    "anyOf": [
+                                        {"type": "string"},
+                                        {
+                                            "type": "array",
+                                            "description": (
+                                                "A list inside the item: one "
+                                                "object per nested item, keyed "
+                                                "by its item field names."
+                                            ),
+                                            "items": {
+                                                "type": "object",
+                                                "additionalProperties": {
+                                                    "type": "string"
+                                                },
+                                            },
+                                        },
+                                    ]
+                                },
                             },
                         },
                         "inputs_used": {

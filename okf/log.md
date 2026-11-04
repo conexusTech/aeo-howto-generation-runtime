@@ -1,5 +1,21 @@
 # Log
 
+## 2026-11-04
+
+### Update
+
+`task: "section_copy"` follows each field's copy source (`copy-source-on-every-field`, Meriwether Sites C20,
+runtime half): every field and item field carries `source` `generated` (the default when absent) or `brand`,
+and the request carries the organization's brand record as `brand`. A brand field is written only from that
+record, shown fenced with `brand:<key>` ids: left out when the record lacks it, refused when it cites no brand
+id, never asked when there is no record, and its numbers sourced by the record alone. A list item may hold one
+level of list (FAQ groups and their questions), with the same limits, required parts, price, number,
+competitor and edit rules as a top-level field; deeper nesting is refused. The stub drafts both. After
+review: that a brand field's wording comes from the record is a prompt rule, and only its numbers are checked
+against the record in code; a list needing a brand part is refused up front with no record; brand ids are
+distinct when keys clash; keys are never number sources; the audit lists only cited brand ids. See
+[section copy](/lib/section-copy.md).
+
 ## 2026-10-31
 
 ### Update

@@ -64,15 +64,22 @@ A success carries `title`, `sections`, `slots`, `similarity`, `regeneration`
 
 Request: `task`, `subject` (`section` / `entry`; `section` when absent),
 `template` (`key`, `name`, `fields[]` of `name`, `max_length`,
-`kind` text / rich_text / list, `item_fields[]`, `required`; `links[]` of
+`kind` text / rich_text / list, `item_fields[]`, `required`, `source` generated /
+brand, `generated` when absent; an item field has the same parts, and may itself
+be a `list` with its own `item_fields`, one level only; `links[]` of
 `field`, `href`, `target` or null, `item` 0-based or absent; empty when absent),
 `page` (`title`, `page_type`, `address`, `other_sections_text[]`),
 `questions[]` (`id`, `text`, `verdict` lost / missing / earned / unmeasured,
 `competitors[]`, `top_cited_host`), `context`, `prices` (`allowed`, `list[]` of
-`item`, `price`; off when absent), `current_fields`, `generated_baseline`,
+`item`, `price`; off when absent), `brand` (the organization's brand record:
+fact name to a string, number or list of them, keys in a stable sorted order;
+empty when absent or null), `current_fields`, `generated_baseline`,
 `edit_policy`, `rejected[]` (`reason`, `at`; newest first, at most three shown;
 empty when absent), `corpus[]` (`draft_id`, `organization_id`, `text`). For an
 entry, `template` is the collection's entry schema and `page` the entry's own.
+
+A list field's value in `fields` is a list of items, each a name to a string or,
+for a list inside the item, a list of name-to-string items.
 
 Response: `task`, `fields`, `field_notes` (`inputs_used` per field), `refused`
 (field to reason), `preserved_fields`, `discarded_fields`, `edit_policy`,

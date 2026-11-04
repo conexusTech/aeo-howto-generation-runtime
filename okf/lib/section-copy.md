@@ -4,7 +4,7 @@ title: Section copy
 description: The second task on POST /invocations. Copy for one section of an organization's own site, written for the questions the section is meant to win, with prices, phone, licence, address and hours numbers re-checked in code after the model answers, and a person's edited fields kept word for word.
 resource: app/howto_generation/section_copy.py
 tags: [meriwether-sites, section-copy, refusal, merge]
-timestamp: 2026-10-31
+timestamp: 2026-11-04
 ---
 
 # Section copy
@@ -174,6 +174,69 @@ so a gateway that omits them gets the earlier prompt.
   for a phone, address, hours or licence number and for a claim; they never make
   a price listed, because only the price list does.
 
+## Copy sources and lists inside list items
+
+Since 2026-11-04 (`copy-source-on-every-field`, Meriwether Sites C20) every field
+and item field carries a **copy source**:
+
+- `generated` (the default, and what a field with no `source` means, so an older
+  gateway's request is drafted exactly as before): written from the questions,
+  the business, the page and the price list, as above.
+- `brand`: written **only** from the request's `brand`, the organization's brand
+  record. A `brand` list field makes everything inside it brand.
+- `manual` is never sent: a manual field is a person's alone. A request carrying
+  one is refused at validation rather than drafted.
+
+The brand record is shown fenced in the prompt's stable half, beside the
+business, one `[brand:<key>]` line per fact, in the record's order: at most 30
+facts, each value at most 1000 characters (bounded before a list is joined); a
+list's plain values are joined with "; ", and an object, a nested list, a
+boolean or null is skipped. Two keys that shorten to the same name get distinct
+ids (`brand:tagline`, `brand:tagline-2`). The gateway sends `brand` with its keys
+in a stable, sorted order, so the 30-fact cut and the suffixes are stable too.
+`brand: null` is no record.
+
+⚠️ **That a brand field's WORDING comes from the record is a prompt rule, not a
+check.** The field's line says "from the brand record", and the rules tell the
+model to use the record's words and to leave the field out when the record does
+not hold what it asks for. Code cannot tell a faithful shortening from an
+invention, and does not try. What code does enforce:
+
+- **No brand record**: a brand field is never asked of the model and comes back
+  in `refused` as `BRAND_EMPTY`, as does a list with a **required** brand part
+  at any depth, which could never be complete. An optional brand part of a list
+  item is not listed in the prompt, and a link on it is not shown. When every
+  field is refused this way, the model is not called.
+- **Left out**: refused as `BRAND_LEFT_OUT` (`left out: the brand record does not
+  hold it`).
+- **Written but citing no `brand:` id** in `inputs_used`: the field, list or
+  not, is refused as `BRAND_UNCITED`; a brand part of a generated list item is
+  left out of every item instead (and an item that then lacks a required part
+  refuses the list, as any missing part does).
+- **Numbers in a brand value** (phone, licence, address, hours) are sourced
+  only by the brand record's **values**, not by the page, the questions or the
+  business record. This is the one place the record is checked against what
+  was written. Prices follow the price list exactly as for any field.
+
+The record's values are also sources for a generated field's numbers and for
+claims; its keys never are, because a key is the record's label for a fact,
+not a fact. The audit's `inputs_used` lists only the `brand:` ids a kept field
+cited.
+
+A list item may hold **one** more level of list (FAQ groups and their
+questions, a plan's features, a comparison's cells): an item field of `kind:
+list` with its own `item_fields`. A list inside that is refused at validation
+with a message naming the path. The nested list gets every check a top-level
+field gets: its own character limits and `required` parts (a reason names the
+path, `item 1's questions item 2's answer is longer than …`), undeclared keys
+dropped, the price, number and competitor checks, claim notes, voice tells and
+similarity. A person's edit anywhere inside a list makes the whole top-level
+field theirs, because the field is compared as one value, so `preserve` keeps a
+nested edit word for word and `discard` names the field it replaced.
+
+A link on a label inside a nested list is not placed in the prompt: links are
+matched to top-level fields and first-level item fields only.
+
 ## A person's field is kept by name
 
 A field whose current value differs from the generated baseline is a person's
@@ -200,14 +263,18 @@ in both modes, for the reason [regeneration](/lib/regeneration.md) gives.
 `HOWTO_GENERATION_USE_STUB_MODEL` serves this task too. The stub drafts from the
 inputs, deterministically: a field whose name suggests a headline gets the first
 question's text (or the page title), every other field an obviously canned
-sentence, a list one item per question up to three. It respects every length
+sentence, a list one item per question up to three, a list inside an item
+one item per question up to two, and a brand field the brand fact whose key
+matches its name (case and punctuation ignored), citing it, or nothing when no
+fact matches, so it is left out. It respects every length
 limit and writes no digits of its own, so a local run exercises the whole
 pipeline without tripping a check the inputs did not already pass.
 
 ## The model call
 
 The section tool is generic (`fields` as an array of `{name, text | items,
-inputs_used}`, plus an optional `disagreements` array of strings) rather than
+inputs_used}`, an item's value a string or an array of objects for a list
+inside it, plus an optional `disagreements` array of strings) rather than
 built per template or per subject, so its definition is byte-stable
 and stays in the cached prefix. The streaming, the unforced first call and the
 one forced retry are the same code as the article's, shared through one helper

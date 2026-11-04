@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SectionType = Literal["intro", "step", "tip", "outro"]
 
@@ -271,15 +271,32 @@ SectionFieldKind = Literal["text", "rich_text", "list"]
 QuestionVerdict = Literal["lost", "missing", "earned", "unmeasured"]
 
 
+#: Where a field's copy comes from. `generated`: Meriwether writes it from
+#: Share of Voice, the business, the page and the price list. `brand`: written
+#: only from the organization's brand record (`SectionCopyRequest.brand`), and
+#: left out when the record does not hold it. `manual` fields are a person's
+#: alone and are never sent, so the value is refused rather than drafted.
+#: Absent means `generated`, which is what every field meant before C20.
+FieldSource = Literal["generated", "brand"]
+
+
 class SectionItemField(BaseModel):
-    """One field inside every item of a `list` field. Items do not nest."""
+    """One field inside every item of a `list` field.
+
+    An item field may itself be a `list` (FAQ groups -> questions, pricing
+    plans -> features), with its own `item_fields`. That is the only level of
+    nesting: a list inside a nested list is refused by `SectionTemplate`.
+    """
 
     model_config = _INBOUND
 
     name: str
     max_length: int | None = Field(default=None, ge=1)
-    kind: Literal["text", "rich_text"] = "text"
+    kind: SectionFieldKind = "text"
     required: bool = False
+    source: FieldSource = "generated"
+    #: Only meaningful when `kind` is `list`.
+    item_fields: list[SectionItemField] = Field(default_factory=list)
 
 
 class SectionTemplateField(BaseModel):
@@ -294,6 +311,34 @@ class SectionTemplateField(BaseModel):
     #: Only meaningful when `kind` is `list`.
     item_fields: list[SectionItemField] = Field(default_factory=list)
     required: bool = False
+    #: A `brand` list field makes every value inside it a brand value.
+    source: FieldSource = "generated"
+
+
+def _check_item_fields(
+    path: str, item_fields: list[SectionItemField], *, nested: bool
+) -> None:
+    """A list's item fields: present, uniquely named, and at most one level of
+    list below them. `nested` is True for the item fields of a list that is
+    itself inside a list item."""
+    if not item_fields:
+        raise ValueError(f"list field {path!r} declares no item_fields")
+    names = [i.name for i in item_fields]
+    if len(names) != len(set(names)):
+        raise ValueError(f"item field names of {path!r} must be unique")
+    for item in item_fields:
+        if item.kind != "list":
+            if item.item_fields:
+                raise ValueError(
+                    f"{path}.{item.name} declares item_fields but is not a list"
+                )
+            continue
+        if nested:
+            raise ValueError(
+                f"{path}.{item.name} is a list inside a list inside a list item; "
+                "a list item may hold only one level of list"
+            )
+        _check_item_fields(f"{path}.{item.name}", item.item_fields, nested=True)
 
 
 class SectionLink(BaseModel):
@@ -332,14 +377,11 @@ class SectionTemplate(BaseModel):
         if len(names) != len(set(names)):
             raise ValueError("template field names must be unique")
         for field in self.fields:
-            if field.kind == "list" and not field.item_fields:
+            if field.kind == "list":
+                _check_item_fields(field.name, field.item_fields, nested=False)
+            elif field.item_fields:
                 raise ValueError(
-                    f"list field {field.name!r} declares no item_fields"
-                )
-            item_names = [i.name for i in field.item_fields]
-            if len(item_names) != len(set(item_names)):
-                raise ValueError(
-                    f"item field names of {field.name!r} must be unique"
+                    f"{field.name!r} declares item_fields but is not a list"
                 )
         return self
 
@@ -429,6 +471,16 @@ class SectionCopyRequest(BaseModel):
     #: The gateway's runtime-context payload, verbatim, as for articles.
     context: dict[str, Any] = Field(default_factory=dict)
     prices: PricePolicy = Field(default_factory=PricePolicy)
+    #: The organization's brand record, from its brand onboarding: fact name ->
+    #: value (a string, a number, or a list of them). The ONLY source for a
+    #: `brand` field. Empty when absent, and then no brand field is drafted.
+    brand: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("brand", mode="before")
+    @classmethod
+    def _no_brand_record_is_empty(cls, value: Any) -> Any:
+        # `brand: null` is a gateway saying "no record", which is what empty means.
+        return {} if value is None else value
 
     #: The section's live fields, a person's edits included. None on a first draft.
     current_fields: dict[str, Any] | None = None
@@ -497,7 +549,8 @@ class SectionCopyResponse(BaseModel):
 
     task: Literal["section_copy"] = "section_copy"
     #: Field name -> a string (`text`, `rich_text`) or a list of items, each a
-    #: name -> string mapping (`list`). A field absent here was not drafted:
+    #: name -> value mapping (`list`), where a value is a string or, for a list
+    #: inside an item, a list of name -> string mappings. A field absent here was not drafted:
     #: it is in `refused` with the reason.
     fields: dict[str, Any] = Field(default_factory=dict)
     field_notes: dict[str, FieldNote] = Field(default_factory=dict)

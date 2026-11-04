@@ -200,3 +200,14 @@ Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-res
 - AND nothing it writes is refused
 
 **Checked by:** scg-stub
+
+#### Scenario: A brand field is written only from the brand record, and a list inside a list item is drafted under every check
+
+- GIVEN a section request whose fields carry a copy source, a brand record, and a list item holding a list (an FAQ group's questions)
+- WHEN the section is drafted
+- THEN a brand field is written only from the brand record, citing it, and is left out with a reason when the record lacks the fact or there is no record
+- AND a manual field is refused before anything is drafted
+- AND every field inside the nested list is held to its limit, its required parts and the price, number and competitor checks, and a person's edit inside it is kept
+- AND a list nested any deeper is refused with the path named
+
+**Checked by:** scg-copy-sources

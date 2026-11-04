@@ -304,3 +304,19 @@ Draft twice with the stub; draft with no questions; a template whose headline li
 **Expect**
 
 Identical fields and notes; the headline is the first question, or the page title with none; it is within 10 characters; no digit in what the stub wrote; nothing refused; the flag serves `task: "section_copy"`. A stub that trips a check on its own output fails.
+
+---
+
+### Check: scg-copy-sources
+
+**Requirement:** A brand field is written only from the brand record, and a list inside a list item is drafted under every check
+**Surface:** Section copy task
+**Automated:** `tests/test_section_copy_sources.py`
+
+**Do**
+
+Draft an FAQ groups section with a brand tagline and a brand answer, once with a brand record holding the tagline and once with none; put a price in a nested answer with prices off, a 250-character nested answer against a 200 limit, a field marked manual, and a list three levels deep.
+
+**Expect**
+
+With the record, the tagline cites `brand:tagline`; without it, the brand fields are refused as not held and the model is not asked for them; the price and the over-long answer are refused with the nested path named; the manual field and the third level are refused with a typed error. A brand value written without the record, or a nested value that skips a check, fails the check.

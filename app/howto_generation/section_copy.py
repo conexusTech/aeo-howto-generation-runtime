@@ -46,6 +46,7 @@ from app.howto_generation.contracts import (
     SectionCopyAudit,
     SectionCopyRequest,
     SectionCopyResponse,
+    SectionItemField,
     SectionSimilarity,
     SectionTemplateField,
     TokenUsage,
@@ -55,6 +56,41 @@ from app.howto_generation.runtime import _context_version, _organization_id
 from app.howto_generation import slots as slots_module
 
 _NOT_DRAFTED = "the model did not draft this field"
+#: A brand field the model left out, as the prompt tells it to when the brand
+#: record does not hold what the field asks for.
+BRAND_LEFT_OUT = "left out: the brand record does not hold it"
+#: A brand field the model wrote while citing nothing from the brand record.
+BRAND_UNCITED = (
+    "a brand field is written only from the brand record, and this draft cites "
+    "nothing from it"
+)
+#: A brand field, or a field with a required brand part at any depth, when
+#: the request carries no brand record at all.
+BRAND_EMPTY = "a brand field, and this request carries no brand record to write it from"
+
+
+def _has_required_brand_part(
+    item_fields: list[SectionItemField], *, brand: bool = False
+) -> bool:
+    """Whether a list's items need a brand part they can never have without a
+    brand record: a required item field that is brand, or sits in a brand
+    list, at any depth."""
+    for item in item_fields:
+        item_brand = brand or item.source == "brand"
+        if item.required and item_brand:
+            return True
+        if item.kind == "list" and _has_required_brand_part(
+            item.item_fields, brand=item_brand
+        ):
+            return True
+    return False
+
+
+def needs_brand_record(spec: SectionTemplateField) -> bool:
+    """Whether a field cannot be drafted at all without a brand record."""
+    if spec.source == "brand":
+        return True
+    return spec.kind == "list" and _has_required_brand_part(spec.item_fields)
 
 #: Bounds on the model's own disagreement lines, which are untrusted text that
 #: reaches a person's screen. The gateway cuts a note at 200 characters.
@@ -143,6 +179,74 @@ def _over_limit(text: str, limit: int | None) -> bool:
     return limit is not None and len(text) > limit
 
 
+def _normalize_items(
+    raw_items: list[Any],
+    item_specs: list[SectionItemField],
+    *,
+    brand: bool,
+    cites_brand: bool,
+    where: str = "",
+) -> tuple[list[dict[str, Any]], str | None]:
+    """A list's items, allowlisted against its item fields, one level of list
+    deep. Returns `(items, problem)`: the first reason the list cannot stand,
+    or None.
+
+    `brand` is True inside a `brand` list field. A brand value is kept only
+    when the field's entry cites a brand id (`cites_brand`); otherwise it is
+    left out of every item, as the prompt says the model should have done, and
+    an item that then lacks a required part is a problem like any other.
+    """
+    items: list[dict[str, Any]] = []
+    problem: str | None = None
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        item: dict[str, Any] = {}
+        label = f"{where}item {len(items) + 1}"
+        for item_spec in item_specs:
+            item_brand = brand or item_spec.source == "brand"
+            if item_brand and not cites_brand:
+                continue
+            value = raw.get(item_spec.name)
+            if item_spec.kind == "list":
+                if value is None:
+                    continue
+                if not isinstance(value, list):
+                    if problem is None:
+                        problem = f"{label}'s {item_spec.name} is not a list"
+                    continue
+                nested, nested_problem = _normalize_items(
+                    value,
+                    item_spec.item_fields,
+                    brand=item_brand,
+                    cites_brand=cites_brand,
+                    where=f"{label}'s {item_spec.name} ",
+                )
+                if nested_problem is not None and problem is None:
+                    problem = nested_problem
+                if nested:
+                    item[item_spec.name] = nested
+                continue
+            if isinstance(value, str) and value.strip():
+                if item_spec.kind == "rich_text":
+                    value = _demote_top_headings(value)
+                if _over_limit(value, item_spec.max_length) and problem is None:
+                    problem = (
+                        f"{label}'s {item_spec.name} is longer "
+                        f"than the template's {item_spec.max_length} characters"
+                    )
+                item[item_spec.name] = value
+        if item:
+            # An item with something in it must hold every part the template
+            # requires: a question with no answer is not a complete list, and
+            # must not look like one. The same at the nested level.
+            for item_spec in item_specs:
+                if item_spec.required and item_spec.name not in item and problem is None:
+                    problem = f"{label} is missing its required {item_spec.name}"
+            items.append(item)
+    return items, problem
+
+
 def normalize(
     drafted: DraftedSectionCopy,
     *,
@@ -154,7 +258,9 @@ def normalize(
     Returns `(fields, notes, refused)`. A field the model named that the
     template does not declare is dropped unread; the first entry for a name
     wins. Values must be strings; a list item keeps only declared keys with
-    string values, and an item left with nothing is dropped.
+    string values (or, for a list inside an item, a list of such items), and
+    an item left with nothing is dropped. A `brand` field whose entry cites no
+    `brand:` id is refused; a brand item field's values are then left out.
     """
     specs = {spec.name: spec for spec in fields_to_draft}
     fields: dict[str, Any] = {}
@@ -166,38 +272,28 @@ def normalize(
         if not isinstance(name, str) or name not in specs or name in fields or name in refused:
             continue
         spec = specs[name]
+        brand = spec.source == "brand"
+
+        cited = entry.get("inputs_used")
+        used = (
+            sorted({c for c in cited if isinstance(c, str) and c in offered_ids})
+            if isinstance(cited, list)
+            else []
+        )
+        cites_brand = any(u.startswith("brand:") for u in used)
+
         if spec.kind == "list":
             raw_items = entry.get("items")
-            if not isinstance(raw_items, list):
+            if not isinstance(raw_items, list) or not raw_items:
                 continue
-            items: list[dict[str, str]] = []
-            problem: str | None = None
-            for raw in raw_items:
-                if not isinstance(raw, dict):
-                    continue
-                item: dict[str, str] = {}
-                for item_spec in spec.item_fields:
-                    value = raw.get(item_spec.name)
-                    if isinstance(value, str) and value.strip():
-                        if item_spec.kind == "rich_text":
-                            value = _demote_top_headings(value)
-                        if _over_limit(value, item_spec.max_length) and problem is None:
-                            problem = (
-                                f"item {len(items) + 1}'s {item_spec.name} is longer "
-                                f"than the template's {item_spec.max_length} characters"
-                            )
-                        item[item_spec.name] = value
-                if item:
-                    # An item with something in it must hold every part the
-                    # template requires: a question with no answer is not a
-                    # complete list, and must not look like one.
-                    for item_spec in spec.item_fields:
-                        if item_spec.required and item_spec.name not in item and problem is None:
-                            problem = (
-                                f"item {len(items) + 1} is missing its required "
-                                f"{item_spec.name}"
-                            )
-                    items.append(item)
+            # Before the items are read: they would all be brand values, all
+            # left out, and the list would read as never written.
+            if brand and not cites_brand:
+                refused[name] = BRAND_UNCITED
+                continue
+            items, problem = _normalize_items(
+                raw_items, spec.item_fields, brand=brand, cites_brand=cites_brand
+            )
             if not items:
                 continue
             if problem is not None:
@@ -208,6 +304,9 @@ def normalize(
             value = entry.get("text")
             if not isinstance(value, str) or not value.strip():
                 continue
+            if brand and not cites_brand:
+                refused[name] = BRAND_UNCITED
+                continue
             if spec.kind == "rich_text":
                 value = _demote_top_headings(value)
             if _over_limit(value, spec.max_length):
@@ -217,18 +316,41 @@ def normalize(
                 continue
             fields[name] = value
 
-        cited = entry.get("inputs_used")
-        used = (
-            sorted({c for c in cited if isinstance(c, str) and c in offered_ids})
-            if isinstance(cited, list)
-            else []
-        )
         notes[name] = FieldNote(inputs_used=used)
 
     for spec in fields_to_draft:
         if spec.name not in fields and spec.name not in refused:
-            refused[spec.name] = _NOT_DRAFTED
+            refused[spec.name] = BRAND_LEFT_OUT if spec.source == "brand" else _NOT_DRAFTED
     return fields, notes, refused
+
+
+def _texts_with_source(
+    value: Any,
+    item_specs: list[SectionItemField],
+    *,
+    brand: bool,
+    where: str = "",
+) -> Iterable[tuple[str, str, bool]]:
+    """`(label, text, brand)` for every text inside a list field's items, at
+    every level, in order. `label` names the item and part for a reason."""
+    if not isinstance(value, list):
+        return
+    by_name = {spec.name: spec for spec in item_specs}
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+        for key, inner in item.items():
+            spec = by_name.get(key)
+            item_brand = brand or (spec is not None and spec.source == "brand")
+            if isinstance(inner, str):
+                yield f"{where}item {index}'s {key}", inner, item_brand
+            elif isinstance(inner, list):
+                yield from _texts_with_source(
+                    inner,
+                    spec.item_fields if spec is not None else [],
+                    brand=item_brand,
+                    where=f"{where}item {index}'s {key} ",
+                )
 
 
 def post_check(
@@ -236,44 +358,50 @@ def post_check(
     *,
     request: SectionCopyRequest,
     sources: Iterable[str],
+    brand_sources: Iterable[str] = (),
 ) -> dict[str, str]:
     """TR-1 and TR-2, and the competitor rule, over every drafted field and
-    every list item's fields.
+    every list item's fields, a list inside an item included.
 
     `sources` is every text a number may come from: what the prompt showed
-    (`SectionCopyPrompt.source_texts`) plus the person's edited fields.
+    (`SectionCopyPrompt.source_texts`) plus the person's edited fields. A
+    `brand` value's number may come only from `brand_sources`, the brand
+    record as the prompt showed it (`SectionCopyPrompt.brand_source_texts`):
+    a brand field is written from the brand record and nothing else.
 
     Returns field name -> reason for each field that must be removed. A list is
     removed whole when any one of its items fails, since the list is one field.
     """
     listed = section_checks.listed_price_keys(e.price for e in request.prices.items)
     sourced = section_checks.sourced_numbers(sources)
+    brand_sourced = section_checks.sourced_numbers(brand_sources)
     competitors = [c for q in request.questions for c in q.competitors]
+    specs = {spec.name: spec for spec in request.template.fields}
+
+    def reason_for(text: str, brand: bool) -> str | None:
+        return section_checks.refusal_reason(
+            text,
+            prices_allowed=request.prices.allowed,
+            listed=listed,
+            sourced=brand_sourced if brand else sourced,
+            competitors=competitors,
+        )
+
     refused: dict[str, str] = {}
     for name, value in fields.items():
+        spec = specs.get(name)
+        brand = spec is not None and spec.source == "brand"
         if isinstance(value, list):
-            for index, item in enumerate(value, start=1):
-                for key, text in item.items():
-                    reason = section_checks.refusal_reason(
-                        text,
-                        prices_allowed=request.prices.allowed,
-                        listed=listed,
-                        sourced=sourced,
-                        competitors=competitors,
-                    )
-                    if reason is not None:
-                        refused[name] = f"item {index}'s {key} {reason}"
-                        break
-                if name in refused:
+            item_specs = spec.item_fields if spec is not None else []
+            for label, text, text_brand in _texts_with_source(
+                value, item_specs, brand=brand
+            ):
+                reason = reason_for(text, text_brand)
+                if reason is not None:
+                    refused[name] = f"{label} {reason}"
                     break
         else:
-            reason = section_checks.refusal_reason(
-                value,
-                prices_allowed=request.prices.allowed,
-                listed=listed,
-                sourced=sourced,
-                competitors=competitors,
-            )
+            reason = reason_for(value, brand)
             if reason is not None:
                 refused[name] = reason
     return refused
@@ -284,7 +412,7 @@ def copy_text(fields: dict[str, Any]) -> str:
     parts: list[str] = []
     for value in fields.values():
         if isinstance(value, list):
-            parts.extend(" ".join(item.values()) for item in value)
+            parts.extend(" ".join(_strings(item)) for item in value)
         elif isinstance(value, str):
             parts.append(value)
     return "\n\n".join(parts)
@@ -396,7 +524,11 @@ def disagreement_notes(
     return [f"disagreement:{line}" for line in lines]
 
 
-def _inputs_used(request: SectionCopyRequest, facts_provenance: list[str]) -> list[str]:
+def _inputs_used(
+    request: SectionCopyRequest,
+    facts_provenance: list[str],
+    notes: dict[str, FieldNote],
+) -> list[str]:
     paths = set(facts_provenance)
     organization = request.context.get("organization")
     if isinstance(organization, dict) and isinstance(organization.get("description"), str):
@@ -404,6 +536,12 @@ def _inputs_used(request: SectionCopyRequest, facts_provenance: list[str]) -> li
     for key in ("products_services", "personas", "voice_tone"):
         if request.context.get(key):
             paths.add(key)
+    # Brand facts only as cited by a field this run kept: the record can hold
+    # thirty facts, and listing them all would claim the draft drew on each.
+    paths.update(
+        used for note in notes.values() for used in note.inputs_used
+        if used.startswith("brand:")
+    )
     return sorted(paths)
 
 
@@ -419,12 +557,21 @@ def handle(
     preserved = edited if request.edit_policy == "preserve" else []
 
     to_draft = [f for f in request.template.fields if f.name not in preserved]
+    brand = section_prompt.brand_facts(request.brand)
+    # A brand field with no brand record has nothing to be written from, and
+    # neither has a list whose items require a brand part: neither is asked of
+    # the model, and each says why.
+    refused_up_front: dict[str, str] = {}
+    if not brand:
+        refused_up_front = {f.name: BRAND_EMPTY for f in to_draft if needs_brand_record(f)}
+        to_draft = [f for f in to_draft if f.name not in refused_up_front]
     facts = section_prompt.resolve_facts(request.context)
     composition = section_prompt.compose(
         request,
         facts=facts,
         fields_to_draft=to_draft,
         preserved=preserved,
+        brand=brand,
     )
 
     if to_draft:
@@ -437,9 +584,15 @@ def handle(
     fields, notes, refused = normalize(
         drafted, fields_to_draft=to_draft, offered_ids=composition.input_ids
     )
+    refused.update(refused_up_front)
 
     sources = [*composition.source_texts, *edited_texts(request, edited)]
-    for name, reason in post_check(fields, request=request, sources=sources).items():
+    for name, reason in post_check(
+        fields,
+        request=request,
+        sources=sources,
+        brand_sources=composition.brand_source_texts,
+    ).items():
         fields.pop(name, None)
         notes.pop(name, None)
         refused[name] = reason
@@ -491,7 +644,7 @@ def handle(
         organization_id=_organization_id(request.context),
         model_id=settings.HOWTO_GENERATION_MODEL_ID,
         build_version=settings.HOWTO_GENERATION_BUILD_VERSION or None,
-        inputs_used=_inputs_used(request, slots_module.inputs_used(facts)),
+        inputs_used=_inputs_used(request, slots_module.inputs_used(facts), notes),
         # Over what THIS run drafted and kept — not a person's preserved words,
         # which are not ours to flag, and not the prompt, which names every
         # banned character in order to forbid it. The claim and disagreement
