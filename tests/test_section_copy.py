@@ -1445,3 +1445,8 @@ class TestWhatASectionLists:
     def test_an_unknown_source_is_refused(self) -> None:
         with pytest.raises(ValueError):
             request(template={**TEMPLATE, "shows": {"source": "products"}})
+
+    def test_a_collection_with_no_name_is_shown_without_an_empty_quote(self) -> None:
+        p = prompt_for(template={**TEMPLATE, "shows": {**SHOWS_SERVICES, "name": None}})
+        assert "- [shows] The site's collection, whose entries are each a Service" in fenced(p.volatile)
+        assert 'collection ""' not in p.volatile

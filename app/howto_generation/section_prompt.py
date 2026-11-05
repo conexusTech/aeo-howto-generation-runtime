@@ -88,11 +88,11 @@ MAX_NAME_CHARS = 60
 MAX_LINKS = 20
 MAX_LINK_TARGET_CHARS = 120
 MAX_LINK_HREF_CHARS = 200
-#: Rejection reasons: the gateway sends the newest three; a reason is a
-#: sentence or two, not an essay.
 #: A listed collection's titles shown, and each one's length.
 MAX_SHOWN_TITLES = 12
 MAX_SHOWN_TITLE_CHARS = 120
+#: Rejection reasons: the gateway sends the newest three; a reason is a
+#: sentence or two, not an essay.
 MAX_REJECTIONS = 3
 MAX_REJECTION_CHARS = 500
 #: The brand record: a profile of a few dozen short facts, not a document.
@@ -630,9 +630,12 @@ def compose(
                 if lists.entry_type and lists.entry_type.strip()
                 else ""
             )
-            data.append(
-                f'- [shows] The site\'s collection "{shown(lists.name or "", MAX_NAME_CHARS)}"{kind}'
+            named = (
+                f' "{shown(lists.name, MAX_NAME_CHARS)}"'
+                if lists.name and lists.name.strip()
+                else ""
             )
+            data.append(f"- [shows] The site's collection{named}{kind}")
             titles = [t for t in lists.titles if t and t.strip()][:MAX_SHOWN_TITLES]
             if titles:
                 data.append("    - Among what it lists:")
