@@ -164,6 +164,17 @@ so a gateway that omits them gets the earlier prompt.
   describes /contact is a question of meaning, and a word-overlap heuristic
   would flag that honest label while passing a dishonest one that happens to
   share a word with the page title. The prompt is the whole measure.
+
+- **`template.shows`**: what the section lists, when it lists something —
+  `source` "collection" with the collection's `name`, what one `entry_type`
+  is and up to a dozen of its newest `titles` (a feed, case study cards, a
+  team grid), or "guides" for the organization's how-to guides. The prompt
+  shows it inside the data fence under WHAT THIS SECTION LISTS (`[shows] The
+  site's collection "Services", whose entries are each a Service`, the titles
+  beneath), and outside the fence tells the model to write the heading and any
+  text about the list for exactly that. Without it a feed of services was
+  headed "Recent Roofing Work". Absent from an older gateway: no block. The
+  name and titles are sources like the rest of the page.
 - **`rejected`**: reasons a person gave for rejecting earlier drafts of this
   same section or entry, newest first. At most three are shown, each one line of
   at most 500 characters, blanks skipped, inside the data fence under EARLIER

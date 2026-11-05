@@ -359,6 +359,25 @@ class SectionLink(BaseModel):
     item: int | None = Field(default=None, ge=0)
 
 
+class SectionShows(BaseModel):
+    """What a section lists, when it lists something, so its heading and any
+    empty-list text are written for it.
+
+    `source` is "collection" for one of the site's collections (a feed, case
+    study cards, a team grid), with its `name`, what one `entry_type` is, and
+    up to a dozen of its newest `titles`; "guides" for the organization's
+    how-to guides, with none of them. Read-only context, never drafted; the
+    name and the titles are tenant text.
+    """
+
+    model_config = _INBOUND
+
+    source: Literal["collection", "guides"]
+    name: str | None = None
+    entry_type: str | None = None
+    titles: list[str] = Field(default_factory=list)
+
+
 class SectionTemplate(BaseModel):
     model_config = _INBOUND
 
@@ -367,6 +386,8 @@ class SectionTemplate(BaseModel):
     fields: list[SectionTemplateField] = Field(min_length=1)
     #: The links the section's label fields carry. Absent from an older gateway.
     links: list[SectionLink] = Field(default_factory=list)
+    #: What the section lists, when it lists something. Absent from an older gateway.
+    shows: SectionShows | None = None
 
     @model_validator(mode="after")
     def _field_names_are_unique(self) -> SectionTemplate:

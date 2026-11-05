@@ -1397,3 +1397,51 @@ class TestTheTemplateNameCannotOpenAFence:
     def test_CONTROL_a_plain_name_is_shown_whole(self) -> None:
         volatile = prompt_for(subject="entry", template={**TEMPLATE, "name": "Blog post"}).volatile
         assert "THE ENTRY: Blog post." in volatile
+
+
+SHOWS_SERVICES = {
+    "source": "collection",
+    "name": "Services",
+    "entry_type": "Service",
+    "titles": ["Skylight installation", "Roof replacement"],
+}
+
+
+class TestWhatASectionLists:
+    """A feed's heading is written for what it lists (feed-draft-knows-what-it-lists)."""
+
+    def test_a_listed_collection_is_shown_in_the_fence_with_its_titles(self) -> None:
+        p = prompt_for(template={**TEMPLATE, "shows": SHOWS_SERVICES})
+        inside = fenced(p.volatile)
+        assert ('- [shows] The site\'s collection "Services", whose entries are '
+                "each a Service") in inside
+        assert "        - Skylight installation" in inside
+        assert "        - Roof replacement" in inside
+        assert "shows" in p.input_ids
+
+    def test_the_task_says_to_write_for_what_it_lists_outside_the_fence(self) -> None:
+        p = prompt_for(template={**TEMPLATE, "shows": SHOWS_SERVICES})
+        line = ("This section lists what WHAT THIS SECTION LISTS names [shows]: write its "
+                "heading and any text about the list for exactly that, never for something "
+                "else the business does.")
+        assert line in p.volatile
+        assert line not in fenced(p.volatile)
+
+    def test_a_feed_of_guides_says_guides(self) -> None:
+        p = prompt_for(template={**TEMPLATE, "shows": {"source": "guides"}})
+        assert "- [shows] The organization's how-to guides, newest first" in fenced(p.volatile)
+
+    def test_titles_are_capped(self) -> None:
+        many = {**SHOWS_SERVICES, "titles": [f"Title {i}" for i in range(30)]}
+        p = prompt_for(template={**TEMPLATE, "shows": many})
+        assert "        - Title 11" in fenced(p.volatile)
+        assert "Title 12" not in p.volatile
+
+    def test_CONTROL_a_section_that_lists_nothing_gets_no_block(self) -> None:
+        p = prompt_for()
+        assert "LISTS" not in p.volatile
+        assert "shows" not in p.input_ids
+
+    def test_an_unknown_source_is_refused(self) -> None:
+        with pytest.raises(ValueError):
+            request(template={**TEMPLATE, "shows": {"source": "products"}})
