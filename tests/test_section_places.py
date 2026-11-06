@@ -31,6 +31,8 @@ CONTEXT = {
         "industry": "Dentistry",
         "address": "Raleigh, NC",
     },
+    # The scraping geography's home market: one town, as a profile may hold.
+    "geography": {"home_markets": ["Raleigh"]},
 }
 
 RALEIGH = {"name": "Bramblewood Dental Raleigh", "city": "Raleigh", "region": "NC", "main": True}
@@ -68,6 +70,9 @@ class TestSeveralStores:
         facts = p_facts(bramblewood(places=THREE).volatile)
         assert "- city: Raleigh" not in facts
         assert "- address: Raleigh, NC" not in facts
+        # Nor the geography's one home market, which steers copy the same way.
+        assert "- service_area: Raleigh" not in facts
+        assert "- service_area\n" not in facts + "\n"
         # ...and it is not listed as a fact we lack, either.
         assert "- city\n" not in facts + "\n"
         assert "- address\n" not in facts + "\n"
@@ -129,10 +134,41 @@ class TestOneStoreSection:
         assert "Raleigh" not in facts
 
 
+class TestEveryStorePage:
+    """A section of the stores' own pages' layout naming no store shows each
+    page's own store, so it names no single town (review of
+    drafting-names-every-store)."""
+
+    def test_it_is_shown_in_the_fence_and_the_rule_names_no_town(self) -> None:
+        p = bramblewood(places={**THREE, "each_store_page": True})
+        assert (
+            "- [places.each_store_page] This section is shown on every store's own "
+            "page, about whichever store's page shows it"
+        ) in fenced(p.volatile)
+        assert "places.each_store_page" in p.input_ids
+        rule = (
+            "This section is shown on every store's own page "
+            "[places.each_store_page]. Name no single town or store in it: write "
+            "it so it is true on each store's page."
+        )
+        assert rule in flat(p.volatile)
+        assert "The business has stores in more than one place" not in p.volatile
+        assert "Raleigh" not in p_facts(p.volatile)
+
+    def test_a_store_it_names_wins(self) -> None:
+        p = bramblewood(places={**THREE, "store": CARY, "each_store_page": True})
+        assert "about one store [places.store]" in flat(p.volatile)
+        assert "[places.each_store_page]" not in p.volatile
+
+    def test_CONTROL_absent_is_false(self) -> None:
+        assert SectionPlaces.model_validate(THREE).each_store_page is False
+
+
 class TestControls:
     def test_CONTROL_no_stores_keeps_the_profile_town_and_says_nothing_of_places(self) -> None:
         p = bramblewood()
         assert "- city: Raleigh" in p_facts(p.volatile)
+        assert "- service_area: Raleigh" in p_facts(p.volatile)
         assert "WHERE THE BUSINESS IS" not in p.volatile
         assert "places" not in p.input_ids
 

@@ -450,10 +450,13 @@ class SectionPlaces(BaseModel):
 
     stores: list[SectionPlace] = Field(default_factory=list)
     store: SectionPlace | None = None
+    #: The section is laid out on every store's own page and names no store,
+    #: so each page shows its own: it is about whichever store's page shows it.
+    each_store_page: bool = False
 
     @property
     def known(self) -> bool:
-        return bool(self.stores) or self.store is not None
+        return bool(self.stores) or self.store is not None or self.each_store_page
 
 
 class TargetQuestion(BaseModel):

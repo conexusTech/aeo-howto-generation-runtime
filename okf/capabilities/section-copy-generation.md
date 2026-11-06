@@ -115,6 +115,8 @@ Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-res
 - THEN the prompt shows every store's town once, the main store marked, inside the data fence, and tells the model to name every place or a regional phrase true of all of them, never one town alone and never the main store's town alone
 - AND the profile's town is no longer a resolved fact
 - AND when the section is about the Durham store (a map of it, or its own page), the prompt says so and tells the model to name that store's town and no other store's
+- AND with stores, neither the profile's town nor the geography's home market is a resolved fact
+- AND a section drawn on every store's own page that names no store is shown as such, and the model is told to name no single town or store
 - AND with no stores the profile's town stands as before, a store's name cannot close the fence or start an instruction, and at most 30 towns are shown
 
 **Checked by:** scg-places

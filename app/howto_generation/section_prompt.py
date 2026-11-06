@@ -102,8 +102,9 @@ MAX_REJECTION_CHARS = 500
 MAX_PLACES = 30
 MAX_PLACE_CHARS = 120
 #: The facts the stores replace when the site has any: the organization
-#: profile's one location, which made every draft name one town.
-PLACE_FACTS: tuple[str, ...] = ("city", "address")
+#: profile's one location, which made every draft name one town, and the
+#: scraping geography's home markets, which can name one town the same way.
+PLACE_FACTS: tuple[str, ...] = ("city", "address", "service_area")
 #: The brand record: a profile of a few dozen short facts, not a document.
 MAX_BRAND_FACTS = 30
 MAX_BRAND_VALUE_CHARS = 1000
@@ -169,7 +170,8 @@ else. When the copy is about one store, name that store's town and no other
 store's. When it is not, and the business has stores in more than one place,
 never write as if it were in one of them only: name every place, or a
 regional phrase that is true of all of them, and never the main store's town
-alone.
+alone. When the copy is shown on every store's own page, it is about whichever
+store's page shows it: name no single town or store.
 
 WHEN THE BUSINESS AND THE PAGE DISAGREE.
 THE BUSINESS (the record) and THE PAGE (its title and the other text on it) can
@@ -627,7 +629,8 @@ def compose(
     # --- where the business is: store names and towns are tenant text -----
     towns = _towns(request.places.stores)
     store = request.places.store
-    if towns or store is not None:
+    each_store_page = store is None and request.places.each_store_page
+    if towns or store is not None or each_store_page:
         data.append("\nWHERE THE BUSINESS IS")
         if towns:
             shown_towns = [
@@ -648,6 +651,12 @@ def compose(
                 f"{shown(_place_label(store), MAX_PLACE_CHARS)}"
             )
             input_ids.add("places.store")
+        if each_store_page:
+            data.append(
+                f"- [places.each_store_page] This {noun} is shown on every store's "
+                "own page, about whichever store's page shows it"
+            )
+            input_ids.add("places.each_store_page")
 
     data.append(f"\nTHE QUESTIONS THIS {noun.upper()} IS MEANT TO WIN")
     questions = request.questions[:MAX_QUESTIONS]
@@ -773,6 +782,12 @@ def compose(
         task.append(
             f"\nThis {noun} is about one store [places.store]. Where the copy says "
             "where the business is, name that store's town, and no other store's."
+        )
+    elif each_store_page:
+        task.append(
+            f"\nThis {noun} is shown on every store's own page "
+            "[places.each_store_page]. Name no single town or store in it: write "
+            "it so it is true on each store's page."
         )
     elif len(towns) > 1:
         task.append(

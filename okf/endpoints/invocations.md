@@ -73,7 +73,8 @@ be a `list` with its own `item_fields`, one level only; `links[]` of
 `questions[]` (`id`, `text`, `verdict` lost / missing / earned / unmeasured,
 `competitors[]`, `top_cited_host`), `places` (`stores[]` of `name`, `city`,
 `region`, `main` — every live store, the main one first, at most 50 — and
-`store`, the one this section or entry is about, or null; empty when absent),
+`store`, the one this section or entry is about, or null, and `each_store_page`,
+true for a section drawn on every store's own page; empty when absent),
 `context`, `prices` (`allowed`, `list[]` of
 `item`, `price`; off when absent), `brand` (the organization's brand record:
 fact name to a string, number or list of them, keys in a stable sorted order;

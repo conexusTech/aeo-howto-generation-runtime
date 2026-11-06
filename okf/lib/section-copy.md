@@ -194,9 +194,13 @@ so a gateway that omits them gets the earlier prompt.
   alone. The stable half carries the same rule under WHERE THE BUSINESS IS and
   lists it among the inputs a claim may come from. Names and towns are sources
   like the rest of the page. Absent or empty: the earlier prompt, the profile's
-  location as facts. ⚠️ The geography's `service_area` fact is unchanged: a
-  home market narrower than the stores still reaches the model, and only the
-  instruction stands against it.
+  location as facts. With any store the geography's `service_area` is dropped
+  from the facts too, since a one-town home market steers copy the same way.
+  `each_store_page` (true for a section of the stores' own pages' layout that
+  names no store, which the site renders with each page's own store) shows
+  `[places.each_store_page] This section is shown on every store's own page,
+  about whichever store's page shows it` and tells the model to name no single
+  town or store; a `store` named beside it wins.
 - **`rejected`**: reasons a person gave for rejecting earlier drafts of this
   same section or entry, newest first. At most three are shown, each one line of
   at most 500 characters, blanks skipped, inside the data fence under EARLIER
