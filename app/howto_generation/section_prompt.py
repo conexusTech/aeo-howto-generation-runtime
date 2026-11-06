@@ -42,6 +42,8 @@ from app.howto_generation.contracts import (
     SectionCopyRequest,
     SectionItemField,
     SectionLink,
+    SectionPlace,
+    SectionPlaces,
     SectionTemplateField,
     SlotResolution,
     TemplateSlot,
@@ -95,6 +97,13 @@ MAX_SHOWN_TITLE_CHARS = 120
 #: sentence or two, not an essay.
 MAX_REJECTIONS = 3
 MAX_REJECTION_CHARS = 500
+#: Places: the distinct towns a business has stores in, shown at most this
+#: many; the rest are counted.
+MAX_PLACES = 30
+MAX_PLACE_CHARS = 120
+#: The facts the stores replace when the site has any: the organization
+#: profile's one location, which made every draft name one town.
+PLACE_FACTS: tuple[str, ...] = ("city", "address")
 #: The brand record: a profile of a few dozen short facts, not a document.
 MAX_BRAND_FACTS = 30
 MAX_BRAND_VALUE_CHARS = 1000
@@ -133,8 +142,8 @@ does or does not do, how it works, its process, how it decides what comes
 first, how fast it responds, what it promises or guarantees, where it works,
 what it is licensed, certified or insured for, or when it is available is a
 claim about the business. Write a claim only if THE BUSINESS, the RESOLVED
-FACTS, THE PAGE or the price list says it. Those are the inputs, and
-the QUESTIONS are what searchers ask, not facts about this business: a
+FACTS, WHERE THE BUSINESS IS, THE PAGE or the price list says it. Those are
+the inputs, and the QUESTIONS are what searchers ask, not facts about this business: a
 question asking for something fast does not make this business fast. If no
 input says it, write around it: say what is generally true of the work, or
 what the reader should do next, and leave the business's own process unstated.
@@ -151,6 +160,16 @@ so.
 A draft that uses a promise word no input uses (same day, guaranteed,
 licensed, certified, insured, around the clock and the like) is flagged to the
 person who reviews it.
+
+WHERE THE BUSINESS IS.
+WHERE THE BUSINESS IS, when it is there, lists every place the business has a
+store, and says when this copy is about one of them. On where the business is
+and whom it serves, it is the word of the inputs, ahead of any town anywhere
+else. When the copy is about one store, name that store's town and no other
+store's. When it is not, and the business has stores in more than one place,
+never write as if it were in one of them only: name every place, or a
+regional phrase that is true of all of them, and never the main store's town
+alone.
 
 WHEN THE BUSINESS AND THE PAGE DISAGREE.
 THE BUSINESS (the record) and THE PAGE (its title and the other text on it) can
@@ -260,10 +279,36 @@ class SectionCopyPrompt:
         return self.stable, self.volatile
 
 
-def resolve_facts(context: dict[str, Any]) -> SlotResolution:
-    return slots_module.resolve_slots(
-        [TemplateSlot(name=name) for name in FACT_SLOTS], context
-    )
+def resolve_facts(
+    context: dict[str, Any], places: SectionPlaces | None = None
+) -> SlotResolution:
+    """The facts a section may state. When the site has stores, its stores say
+    where the business is (WHERE THE BUSINESS IS), so the profile's one
+    location is neither a fact nor a fact we lack."""
+    names = FACT_SLOTS
+    if places is not None and places.known:
+        names = tuple(n for n in FACT_SLOTS if n not in PLACE_FACTS)
+    return slots_module.resolve_slots([TemplateSlot(name=name) for name in names], context)
+
+
+def _place_label(place: SectionPlace) -> str:
+    """`City, Region`, or the city alone when there is no region."""
+    city, region = _one_line(place.city), _one_line(place.region)
+    return f"{city}, {region}" if region else city
+
+
+def _towns(stores: Sequence[SectionPlace]) -> list[tuple[str, bool]]:
+    """Each distinct town once, in the stores' order (the main store first),
+    and whether the main store is there. Compared without case."""
+    towns: dict[str, tuple[str, bool]] = {}
+    for store in stores:
+        label = _place_label(store)
+        if not label:
+            continue
+        key = label.casefold()
+        seen = towns.get(key)
+        towns[key] = (seen[0], seen[1] or store.main) if seen else (label, store.main)
+    return list(towns.values())
 
 
 def _one_line(value: Any) -> str:
@@ -560,6 +605,31 @@ def compose(
         )
         input_ids.add("page.other_sections")
 
+    # --- where the business is: store names and towns are tenant text -----
+    towns = _towns(request.places.stores)
+    store = request.places.store
+    if towns or store is not None:
+        data.append("\nWHERE THE BUSINESS IS")
+        if towns:
+            shown_towns = [
+                shown(label, MAX_PLACE_CHARS) + (" (the main store)" if main else "")
+                for label, main in towns[:MAX_PLACES]
+            ]
+            more = len(towns) - MAX_PLACES
+            data.append(
+                "- [places] The business has stores in: "
+                + "; ".join(shown_towns)
+                + (f"; and {more} more places" if more > 0 else "")
+            )
+            input_ids.add("places")
+        if store is not None:
+            data.append(
+                f"- [places.store] This {noun} is about one store: "
+                f"{shown(store.name, MAX_PLACE_CHARS)}, in "
+                f"{shown(_place_label(store), MAX_PLACE_CHARS)}"
+            )
+            input_ids.add("places.store")
+
     data.append(f"\nTHE QUESTIONS THIS {noun.upper()} IS MEANT TO WIN")
     questions = request.questions[:MAX_QUESTIONS]
     question_pairs: list[tuple[str, str]] = []
@@ -680,6 +750,18 @@ def compose(
     task.append("Write these fields:")
     for spec in fields_to_draft:
         task.extend(_field_line(spec, placed, has_brand=bool(shown_brand)))
+    if store is not None:
+        task.append(
+            f"\nThis {noun} is about one store [places.store]. Where the copy says "
+            "where the business is, name that store's town, and no other store's."
+        )
+    elif len(towns) > 1:
+        task.append(
+            "\nThe business has stores in more than one place [places]. Where the "
+            "copy says where the business is or whom it serves, name every one of "
+            "those places, or a regional phrase that is true of all of them; never "
+            "one of them alone, and never the main store's town alone."
+        )
     if lists is not None:
         task.append(
             f"\nThis {noun} lists what WHAT THIS {noun.upper()} LISTS names [shows]: "

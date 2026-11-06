@@ -419,6 +419,35 @@ class SectionPage(BaseModel):
     other_sections_text: list[str] = Field(default_factory=list)
 
 
+class SectionPlace(BaseModel):
+    """One of the site's live stores: where the business is. Tenant text."""
+
+    model_config = _INBOUND
+
+    name: str = ""
+    city: str
+    region: str = ""
+    #: The site's main store.
+    main: bool = False
+
+
+class SectionPlaces(BaseModel):
+    """Where the business is (`drafting-names-every-store`): every live store,
+    the main one first, and the one store this section or entry is about —
+    None when it is about the business as a whole. Empty from a site with no
+    stores, and from an older gateway: then the organization profile's
+    location stands, as before."""
+
+    model_config = _INBOUND
+
+    stores: list[SectionPlace] = Field(default_factory=list)
+    store: SectionPlace | None = None
+
+    @property
+    def known(self) -> bool:
+        return bool(self.stores) or self.store is not None
+
+
 class TargetQuestion(BaseModel):
     """One question the section is meant to win, from Share of Voice."""
 
@@ -489,6 +518,8 @@ class SectionCopyRequest(BaseModel):
     template: SectionTemplate
     page: SectionPage
     questions: list[TargetQuestion] = Field(default_factory=list)
+    #: Every store and the one this subject is about. Absent from an older gateway.
+    places: SectionPlaces = Field(default_factory=SectionPlaces)
     #: The gateway's runtime-context payload, verbatim, as for articles.
     context: dict[str, Any] = Field(default_factory=dict)
     prices: PricePolicy = Field(default_factory=PricePolicy)

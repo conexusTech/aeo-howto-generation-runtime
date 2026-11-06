@@ -70,7 +70,10 @@ be a `list` with its own `item_fields`, one level only; `links[]` of
 `field`, `href`, `target` or null, `item` 0-based or absent; empty when absent),
 `page` (`title`, `page_type`, `address`, `other_sections_text[]`),
 `questions[]` (`id`, `text`, `verdict` lost / missing / earned / unmeasured,
-`competitors[]`, `top_cited_host`), `context`, `prices` (`allowed`, `list[]` of
+`competitors[]`, `top_cited_host`), `places` (`stores[]` of `name`, `city`,
+`region`, `main` — every live store, the main one first, at most 50 — and
+`store`, the one this section or entry is about, or null; empty when absent),
+`context`, `prices` (`allowed`, `list[]` of
 `item`, `price`; off when absent), `brand` (the organization's brand record:
 fact name to a string, number or list of them, keys in a stable sorted order;
 empty when absent or null), `current_fields`, `generated_baseline`,

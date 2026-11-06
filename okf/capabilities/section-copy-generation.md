@@ -108,6 +108,17 @@ Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-res
 
 **Checked by:** scg-link-destinations
 
+#### Scenario: A business with several stores is drafted as serving every place, and a section about one store names its town
+
+- GIVEN a business whose profile says "Raleigh, NC" and whose site has stores in Raleigh (the main store), Cary and Durham
+- WHEN a section about the business as a whole is drafted
+- THEN the prompt shows every store's town once, the main store marked, inside the data fence, and tells the model to name every place or a regional phrase true of all of them, never one town alone and never the main store's town alone
+- AND the profile's town is no longer a resolved fact
+- AND when the section is about the Durham store (a map of it, or its own page), the prompt says so and tells the model to name that store's town and no other store's
+- AND with no stores the profile's town stands as before, a store's name cannot close the fence or start an instruction, and at most 30 towns are shown
+
+**Checked by:** scg-places
+
 #### Scenario: A catch-all value in the record is never a disagreement with the page
 
 - GIVEN a record whose industry is "Other", "N/A" or "General", and a page about one line of work

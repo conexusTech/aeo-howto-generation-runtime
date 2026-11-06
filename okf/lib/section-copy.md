@@ -175,6 +175,28 @@ so a gateway that omits them gets the earlier prompt.
   text about the list for exactly that. Without it a feed of services was
   headed "Recent Roofing Work". Absent from an older gateway: no block. The
   name and titles are sources like the rest of the page.
+- **`places`** (`drafting-names-every-store`, 2026-11-06): where the business
+  is — every live store (`name`, `city`, `region`, `main`), the main one first,
+  and the one `store` this section or entry is about (a map, contact block or
+  reviews section showing one store, or a store's own page), or null. Before it
+  the only place a draft knew was the organization profile's location, resolved
+  as the facts `city` and `address`; Bramblewood Dental, with offices in
+  Raleigh, Cary and Durham and a profile reading "Raleigh, NC", was drafted as
+  "Dental Care for Raleigh" everywhere, a map of the Durham office included.
+  With any store, `city` and `address` are dropped from the facts (neither
+  resolved nor listed as lacking), and the prompt shows, inside the fence under
+  WHERE THE BUSINESS IS, `[places] The business has stores in: Raleigh, NC (the
+  main store); Cary, NC; Durham, NC` (each town once, at most 30, the rest
+  counted) and `[places.store] This section is about one store: <name>, in
+  <town>`. Outside the fence: with a store, name that store's town and no other
+  store's; with several towns and no store, name every one or a regional
+  phrase true of all of them, never one alone and never the main store's town
+  alone. The stable half carries the same rule under WHERE THE BUSINESS IS and
+  lists it among the inputs a claim may come from. Names and towns are sources
+  like the rest of the page. Absent or empty: the earlier prompt, the profile's
+  location as facts. ⚠️ The geography's `service_area` fact is unchanged: a
+  home market narrower than the stores still reaches the model, and only the
+  instruction stands against it.
 - **`rejected`**: reasons a person gave for rejecting earlier drafts of this
   same section or entry, newest first. At most three are shown, each one line of
   at most 500 characters, blanks skipped, inside the data fence under EARLIER

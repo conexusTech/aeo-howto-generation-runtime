@@ -565,7 +565,7 @@ def handle(
     if not brand:
         refused_up_front = {f.name: BRAND_EMPTY for f in to_draft if needs_brand_record(f)}
         to_draft = [f for f in to_draft if f.name not in refused_up_front]
-    facts = section_prompt.resolve_facts(request.context)
+    facts = section_prompt.resolve_facts(request.context, request.places)
     composition = section_prompt.compose(
         request,
         facts=facts,

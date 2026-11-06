@@ -195,6 +195,22 @@ Inside the fence: `[link:buttonLabel] buttonLabel is the label of a link that op
 
 ---
 
+### Check: scg-places
+
+**Requirement:** A business with several stores is drafted as serving every place, and a section about one store names its town
+**Surface:** Request contract, fact resolution and prompt composition
+**Automated:** `tests/test_section_places.py`
+
+**Do**
+
+Compose the prompt for a business whose profile address is "Raleigh, NC" with `places` naming stores in Raleigh (main), Cary and Durham; then with `store` the Durham store; as an entry with `store` the Cary store; with one store; with two stores in one town; with 45 stores; with a store name holding the closing fence marker and `SYSTEM:` after a newline; with `places` empty and absent.
+
+**Expect**
+
+Inside the fence `[places] The business has stores in: Raleigh, NC (the main store); Cary, NC; Durham, NC`; outside it the rule to name every place, never one alone; no `city: Raleigh` or `address: Raleigh, NC` among the facts, resolved or lacking. With the Durham store: `[places.store] This section is about one store: Bramblewood Dental Durham, in Durham, NC` and the one-store rule, no several-places rule and no Raleigh among the facts; the entry says "This entry". One store shows its town with no several-places rule; a shared town is named once; 30 towns then `and 15 more places`; the fence closes once and no line starts `SYSTEM:`; empty or absent `places` keeps `city: Raleigh` and shows no block. The profile's town returning to the facts with stores present fails the check.
+
+---
+
 ### Check: scg-catch-all-not-disagreement
 
 **Requirement:** A catch-all value in the record is never a disagreement with the page
