@@ -267,6 +267,22 @@ similarity. A person's edit anywhere inside a list makes the whole top-level
 field theirs, because the field is compared as one value, so `preserve` keeps a
 nested edit word for word and `discard` names the field it replaced.
 
+**List counts** (`faq-groups-draft-meets-its-minimum`, 2026-11-06). A list
+field, or a list inside an item, carries the template's `min_items` and
+`max_items`. Before them the prompt said only "a list of items" and nothing
+checked a count, so FAQ groups (at least three questions a group) were drafted
+with two a group and every draft failed publishing. The field line now says
+`a list of at least 3 and at most 15 items`, or the one bound the template
+sets; the stable half's LISTS INSIDE LIST ITEMS rule says to write at least
+that many in every item that holds one. In code, after the items are
+allowlisted: a list longer than its most is cut to its first `max_items`, at
+either level; one shorter than its least refuses the whole top-level field
+with a reason naming the place (`item 2's items has 2 items; the template
+needs at least 3`, or `has 2 items; …` at the top). A draft therefore never
+offers a list publishing would refuse, and a short one comes back refused
+rather than topped up — inventing a question is not ours to do. The local stub
+pads each list to its least and cuts it to its most. Absent counts: as before.
+
 A link on a label inside a nested list is not placed in the prompt: links are
 matched to top-level fields and first-level item fields only.
 

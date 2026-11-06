@@ -65,7 +65,8 @@ A success carries `title`, `sections`, `slots`, `similarity`, `regeneration`
 Request: `task`, `subject` (`section` / `entry`; `section` when absent),
 `template` (`key`, `name`, `fields[]` of `name`, `max_length`,
 `kind` text / rich_text / list, `item_fields[]`, `required`, `source` generated /
-brand, `generated` when absent; an item field has the same parts, and may itself
+brand, `generated` when absent, and for a list `min_items` (≥ 0) and `max_items`
+(≥ 1), each absent when the template sets none; an item field has the same parts, and may itself
 be a `list` with its own `item_fields`, one level only; `links[]` of
 `field`, `href`, `target` or null, `item` 0-based or absent; empty when absent),
 `page` (`title`, `page_type`, `address`, `other_sections_text[]`),

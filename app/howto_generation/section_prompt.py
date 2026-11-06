@@ -229,6 +229,11 @@ a plan). Write it as a list of objects inside the item, keyed by its own item
 field names, within its own character limits. Every rule here applies to it
 exactly as to any other field.
 
+When a list says how many items it takes, write at least that many and no
+more, in every item that holds one: a group that asks for at least three
+questions gets at least three in every group. A list with too few items is
+thrown away whole.
+
 COMPETITORS.
 The questions may name competitors and the sites answer engines cite today.
 They tell you what this section is up against. Never name a competitor in the
@@ -442,6 +447,20 @@ def _place_links(
     return list(placed.values())
 
 
+def _list_text(spec: SectionTemplateField | SectionItemField) -> str:
+    """`a list of at least 3 and at most 15 items`, or as much of it as the
+    template says; `a list of items` when it says nothing."""
+    least = spec.min_items if spec.min_items else None
+    most = spec.max_items
+    if least is not None and most is not None:
+        return f"a list of at least {least} and at most {most} items"
+    if least is not None:
+        return f"a list of at least {least} items"
+    if most is not None:
+        return f"a list of at most {most} items"
+    return "a list of items"
+
+
 def _kind_text(kind: str) -> str:
     return "plain text" if kind == "text" else "rich text (markdown)"
 
@@ -468,7 +487,7 @@ def _item_lines(
         if item.kind == "list":
             need = "required" if item.required else "optional"
             lines.append(
-                f"{indent}- {item.name}: a list of items, {need}{origin}. Each item has:"
+                f"{indent}- {item.name}: {_list_text(item)}, {need}{origin}. Each item has:"
             )
             lines.extend(
                 _item_lines(
@@ -510,7 +529,7 @@ def _field_line(
                 "WHERE THE LINKS GO"
             )
         return [line]
-    lines = [f"- {spec.name}: a list of items, {need}{origin}. Each item has:"]
+    lines = [f"- {spec.name}: {_list_text(spec)}, {need}{origin}. Each item has:"]
     lines.extend(
         _item_lines(spec, spec.item_fields, "    ", links, brand=brand, has_brand=has_brand)
     )

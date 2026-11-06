@@ -203,6 +203,17 @@ Related: [the pipeline](/lib/section-copy.md) · [slot resolution](/lib/slot-res
 
 **Checked by:** scg-task-routing
 
+#### Scenario: A drafted list holds as many items as its template requires, at every level
+
+- GIVEN an FAQ groups section whose template asks for 1 to 6 groups and 3 to 15 questions in each group
+- WHEN its copy is drafted
+- THEN the prompt says each list's least and most, the groups' and the questions' alike, and the rules say to write at least that many in every item that holds one
+- AND a draft with two questions in a group is not offered: the groups field is refused with a reason naming the group, and the section's other fields are still drafted
+- AND a draft with more than the most is cut to the most, at either level
+- AND a list with no counts is drafted and checked as before, and the local stub writes each list's least
+
+**Checked by:** scg-list-counts
+
 #### Scenario: The local stub drafts deterministically and invents no number
 
 - GIVEN the stub model flag

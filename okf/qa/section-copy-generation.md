@@ -211,6 +211,22 @@ Inside the fence `[places] The business has stores in: Raleigh, NC (the main sto
 
 ---
 
+### Check: scg-list-counts
+
+**Requirement:** A drafted list holds as many items as its template requires, at every level
+**Surface:** Request contract, prompt composition, the answer's normalisation and the stub
+**Automated:** `tests/test_section_list_counts.py`
+
+**Do**
+
+Draft template set 2.0.0's FAQ groups (`groups` 1–6, each group's `items` 3–15) with a scripted model answering 3 and 4 questions a group; 3 and 2; two groups against a least of three; 16 questions in the first of eight groups; and 2 questions under a template with no counts. Read the prompt; draft it with the stub; validate a request with `min_items: -1` and with `max_items: 0`, and one with no counts.
+
+**Expect**
+
+The prompt reads `- groups: a list of at least 1 and at most 6 items, required. Each item has:` and `    - items: a list of at least 3 and at most 15 items, required. Each item has:`; the stable half carries the count rule. 3 and 4 are kept. 3 and 2 refuse `groups` with `item 2's items has 2 items; the template needs at least 3` while `heading` is kept; two groups against three refuse with `has 2 items; the template needs at least 3`. Sixteen and eight come back as 6 groups, the first with 15 questions ending at `Question 15?`. With no counts two questions are kept and the line reads `a list of items`. The stub's groups each hold at least three and nothing is refused. The bad counts are refused at validation. Ignoring the least was shown to take two of these tests red.
+
+---
+
 ### Check: scg-catch-all-not-disagreement
 
 **Requirement:** A catch-all value in the record is never a disagreement with the page

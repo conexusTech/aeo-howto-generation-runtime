@@ -26,7 +26,12 @@ from pydantic import BaseModel, ConfigDict, Field
 if TYPE_CHECKING:
     from anthropic.types import MessageParam, TextBlockParam
 
-from app.howto_generation.contracts import Section, SectionItemField, TokenUsage
+from app.howto_generation.contracts import (
+    Section,
+    SectionItemField,
+    SectionTemplateField,
+    TokenUsage,
+)
 from app.howto_generation.prompt import PromptComposition
 from app.howto_generation.section_prompt import BrandFact, SectionCopyPrompt
 
@@ -187,6 +192,18 @@ def _brand_key(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum())
 
 
+def _sized(
+    sources: list[tuple[str, str] | None],
+    spec: SectionTemplateField | SectionItemField,
+) -> list[tuple[str, str] | None]:
+    """The stub's items for a list: one per source, padded to the template's
+    least and cut to its most, so a stub draft passes the count check."""
+    sized = list(sources)
+    while spec.min_items and len(sized) < spec.min_items:
+        sized.append(None)
+    return sized[: spec.max_items] if spec.max_items is not None else sized
+
+
 def stub_section_copy(prompt: SectionCopyPrompt) -> DraftedSectionCopy:
     """Deterministic section copy built from the inputs, for local runs.
 
@@ -234,7 +251,7 @@ def stub_section_copy(prompt: SectionCopyPrompt) -> DraftedSectionCopy:
                 if item_spec.kind == "list":
                     nested = items_for(
                         item_spec.item_fields,
-                        list(questions[:2]) or [None],
+                        _sized(list(questions[:2]) or [None], item_spec),
                         item_brand,
                         cited,
                     )
@@ -255,7 +272,7 @@ def stub_section_copy(prompt: SectionCopyPrompt) -> DraftedSectionCopy:
     for spec in prompt.fields_to_draft:
         cited: set[str] = set()
         if spec.kind == "list":
-            sources: list[tuple[str, str] | None] = list(questions[:3]) or [None]
+            sources = _sized(list(questions[:3]) or [None], spec)
             items = items_for(spec.item_fields, sources, spec.source == "brand", cited)
             if not items:
                 continue

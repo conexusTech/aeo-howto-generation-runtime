@@ -179,6 +179,25 @@ def _over_limit(text: str, limit: int | None) -> bool:
     return limit is not None and len(text) > limit
 
 
+def _counted(
+    items: list[dict[str, Any]],
+    spec: SectionTemplateField | SectionItemField,
+    where: str = "",
+) -> tuple[list[dict[str, Any]], str | None]:
+    """A list cut to the template's most items, and the reason it cannot
+    stand when it holds fewer than the template's least
+    (`faq-groups-draft-meets-its-minimum`): publishing refuses it, so a draft
+    never offers it."""
+    if spec.max_items is not None:
+        items = items[: spec.max_items]
+    if spec.min_items and len(items) < spec.min_items:
+        noun = "item" if len(items) == 1 else "items"
+        return items, (
+            f"{where}has {len(items)} {noun}; the template needs at least {spec.min_items}"
+        )
+    return items, None
+
+
 def _normalize_items(
     raw_items: list[Any],
     item_specs: list[SectionItemField],
@@ -224,6 +243,12 @@ def _normalize_items(
                 )
                 if nested_problem is not None and problem is None:
                     problem = nested_problem
+                if nested:
+                    nested, count_problem = _counted(
+                        nested, item_spec, f"{label}'s {item_spec.name} "
+                    )
+                    if count_problem is not None and problem is None:
+                        problem = count_problem
                 if nested:
                     item[item_spec.name] = nested
                 continue
@@ -296,6 +321,8 @@ def normalize(
             )
             if not items:
                 continue
+            if problem is None:
+                items, problem = _counted(items, spec)
             if problem is not None:
                 refused[name] = problem
                 continue

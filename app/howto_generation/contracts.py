@@ -297,6 +297,10 @@ class SectionItemField(BaseModel):
     source: FieldSource = "generated"
     #: Only meaningful when `kind` is `list`.
     item_fields: list[SectionItemField] = Field(default_factory=list)
+    #: Only meaningful when `kind` is `list`: how many items the template
+    #: allows (its `minItems` / `maxItems`). Absent from an older gateway.
+    min_items: int | None = Field(default=None, ge=0)
+    max_items: int | None = Field(default=None, ge=1)
 
 
 class SectionTemplateField(BaseModel):
@@ -313,6 +317,10 @@ class SectionTemplateField(BaseModel):
     required: bool = False
     #: A `brand` list field makes every value inside it a brand value.
     source: FieldSource = "generated"
+    #: Only meaningful when `kind` is `list`: how many items the template
+    #: allows (its `minItems` / `maxItems`). Absent from an older gateway.
+    min_items: int | None = Field(default=None, ge=0)
+    max_items: int | None = Field(default=None, ge=1)
 
 
 def _check_item_fields(
